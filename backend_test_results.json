@@ -1,0 +1,942 @@
+[
+  {
+    "test": "API Health Check",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.057427",
+    "data": {
+      "message": "ShambaManager API",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "test": "Admin Login",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.401063",
+    "data": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZXhwIjoxNzcwMzY1NjE5fQ.tQLR2kDq_Npr8u9dH4eBDSqx7WyDbUEezmInZSWht9c",
+      "token_type": "bearer",
+      "user": {
+        "id": 1,
+        "phone": "255700000000",
+        "name": "Admin",
+        "role": "admin",
+        "is_active": true,
+        "created_at": "2026-02-05T08:06:01.279332"
+      }
+    }
+  },
+  {
+    "test": "Get Current User",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.446615",
+    "data": {
+      "id": 1,
+      "phone": "255700000000",
+      "name": "Admin",
+      "role": "admin",
+      "is_active": true,
+      "created_at": "2026-02-05T08:06:01.279332"
+    }
+  },
+  {
+    "test": "List Categories",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.489404",
+    "data": [
+      {
+        "id": 1,
+        "name_sw": "Koo",
+        "name_en": "Cows",
+        "species": "cattle",
+        "sort_order": 1
+      },
+      {
+        "id": 2,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "cattle",
+        "sort_order": 2
+      },
+      {
+        "id": 3,
+        "name_sw": "Ndama Dume",
+        "name_en": "Bull calves",
+        "species": "cattle",
+        "sort_order": 3
+      },
+      {
+        "id": 4,
+        "name_sw": "Ndama Jike",
+        "name_en": "Heifer calves",
+        "species": "cattle",
+        "sort_order": 4
+      },
+      {
+        "id": 5,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaner bulls",
+        "species": "cattle",
+        "sort_order": 5
+      },
+      {
+        "id": 6,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaner heifers",
+        "species": "cattle",
+        "sort_order": 6
+      },
+      {
+        "id": 7,
+        "name_sw": "Maksai",
+        "name_en": "Steers",
+        "species": "cattle",
+        "sort_order": 7
+      },
+      {
+        "id": 8,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding bulls",
+        "species": "cattle",
+        "sort_order": 8
+      },
+      {
+        "id": 9,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young bulls",
+        "species": "cattle",
+        "sort_order": 9
+      },
+      {
+        "id": 10,
+        "name_sw": "Koo",
+        "name_en": "Does/Ewes",
+        "species": "goat",
+        "sort_order": 1
+      },
+      {
+        "id": 11,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "goat",
+        "sort_order": 2
+      },
+      {
+        "id": 12,
+        "name_sw": "Vichinda Dume",
+        "name_en": "Male kids/lambs",
+        "species": "goat",
+        "sort_order": 3
+      },
+      {
+        "id": 13,
+        "name_sw": "Vichinda Jike",
+        "name_en": "Female kids/lambs",
+        "species": "goat",
+        "sort_order": 4
+      },
+      {
+        "id": 14,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaners male",
+        "species": "goat",
+        "sort_order": 5
+      },
+      {
+        "id": 15,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaners female",
+        "species": "goat",
+        "sort_order": 6
+      },
+      {
+        "id": 16,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding males",
+        "species": "goat",
+        "sort_order": 7
+      },
+      {
+        "id": 17,
+        "name_sw": "Maksai",
+        "name_en": "Castrated males",
+        "species": "goat",
+        "sort_order": 8
+      },
+      {
+        "id": 18,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young males",
+        "species": "goat",
+        "sort_order": 9
+      },
+      {
+        "id": 19,
+        "name_sw": "Koo",
+        "name_en": "Does/Ewes",
+        "species": "sheep",
+        "sort_order": 1
+      },
+      {
+        "id": 20,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "sheep",
+        "sort_order": 2
+      },
+      {
+        "id": 21,
+        "name_sw": "Vichinda Dume",
+        "name_en": "Male kids/lambs",
+        "species": "sheep",
+        "sort_order": 3
+      },
+      {
+        "id": 22,
+        "name_sw": "Vichinda Jike",
+        "name_en": "Female kids/lambs",
+        "species": "sheep",
+        "sort_order": 4
+      },
+      {
+        "id": 23,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaners male",
+        "species": "sheep",
+        "sort_order": 5
+      },
+      {
+        "id": 24,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaners female",
+        "species": "sheep",
+        "sort_order": 6
+      },
+      {
+        "id": 25,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding males",
+        "species": "sheep",
+        "sort_order": 7
+      },
+      {
+        "id": 26,
+        "name_sw": "Maksai",
+        "name_en": "Castrated males",
+        "species": "sheep",
+        "sort_order": 8
+      },
+      {
+        "id": 27,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young males",
+        "species": "sheep",
+        "sort_order": 9
+      }
+    ]
+  },
+  {
+    "test": "List Locations",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.530323"
+  },
+  {
+    "test": "Create Location",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.580161",
+    "data": {
+      "id": 1,
+      "name": "Test Location 081339",
+      "description": "Test location for API testing",
+      "is_active": true,
+      "created_at": "2026-02-05T08:13:39.565392"
+    }
+  },
+  {
+    "test": "Get Location",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.622689",
+    "data": {
+      "id": 1,
+      "name": "Test Location 081339",
+      "description": "Test location for API testing",
+      "is_active": true,
+      "created_at": "2026-02-05T08:13:39.565392"
+    }
+  },
+  {
+    "test": "Update Location",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.670567",
+    "data": {
+      "id": 1,
+      "name": "Test Location 081339",
+      "description": "Updated test location description",
+      "is_active": true,
+      "created_at": "2026-02-05T08:13:39.565392"
+    }
+  },
+  {
+    "test": "List Opening Balances",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.714425"
+  },
+  {
+    "test": "Get Locations for Balance",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.753906",
+    "data": [
+      {
+        "id": 1,
+        "name": "Test Location 081339",
+        "description": "Updated test location description",
+        "is_active": true,
+        "created_at": "2026-02-05T08:13:39.565392"
+      }
+    ]
+  },
+  {
+    "test": "Get Categories for Balance",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.793528",
+    "data": [
+      {
+        "id": 1,
+        "name_sw": "Koo",
+        "name_en": "Cows",
+        "species": "cattle",
+        "sort_order": 1
+      },
+      {
+        "id": 2,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "cattle",
+        "sort_order": 2
+      },
+      {
+        "id": 3,
+        "name_sw": "Ndama Dume",
+        "name_en": "Bull calves",
+        "species": "cattle",
+        "sort_order": 3
+      },
+      {
+        "id": 4,
+        "name_sw": "Ndama Jike",
+        "name_en": "Heifer calves",
+        "species": "cattle",
+        "sort_order": 4
+      },
+      {
+        "id": 5,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaner bulls",
+        "species": "cattle",
+        "sort_order": 5
+      },
+      {
+        "id": 6,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaner heifers",
+        "species": "cattle",
+        "sort_order": 6
+      },
+      {
+        "id": 7,
+        "name_sw": "Maksai",
+        "name_en": "Steers",
+        "species": "cattle",
+        "sort_order": 7
+      },
+      {
+        "id": 8,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding bulls",
+        "species": "cattle",
+        "sort_order": 8
+      },
+      {
+        "id": 9,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young bulls",
+        "species": "cattle",
+        "sort_order": 9
+      },
+      {
+        "id": 10,
+        "name_sw": "Koo",
+        "name_en": "Does/Ewes",
+        "species": "goat",
+        "sort_order": 1
+      },
+      {
+        "id": 11,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "goat",
+        "sort_order": 2
+      },
+      {
+        "id": 12,
+        "name_sw": "Vichinda Dume",
+        "name_en": "Male kids/lambs",
+        "species": "goat",
+        "sort_order": 3
+      },
+      {
+        "id": 13,
+        "name_sw": "Vichinda Jike",
+        "name_en": "Female kids/lambs",
+        "species": "goat",
+        "sort_order": 4
+      },
+      {
+        "id": 14,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaners male",
+        "species": "goat",
+        "sort_order": 5
+      },
+      {
+        "id": 15,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaners female",
+        "species": "goat",
+        "sort_order": 6
+      },
+      {
+        "id": 16,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding males",
+        "species": "goat",
+        "sort_order": 7
+      },
+      {
+        "id": 17,
+        "name_sw": "Maksai",
+        "name_en": "Castrated males",
+        "species": "goat",
+        "sort_order": 8
+      },
+      {
+        "id": 18,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young males",
+        "species": "goat",
+        "sort_order": 9
+      },
+      {
+        "id": 19,
+        "name_sw": "Koo",
+        "name_en": "Does/Ewes",
+        "species": "sheep",
+        "sort_order": 1
+      },
+      {
+        "id": 20,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "sheep",
+        "sort_order": 2
+      },
+      {
+        "id": 21,
+        "name_sw": "Vichinda Dume",
+        "name_en": "Male kids/lambs",
+        "species": "sheep",
+        "sort_order": 3
+      },
+      {
+        "id": 22,
+        "name_sw": "Vichinda Jike",
+        "name_en": "Female kids/lambs",
+        "species": "sheep",
+        "sort_order": 4
+      },
+      {
+        "id": 23,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaners male",
+        "species": "sheep",
+        "sort_order": 5
+      },
+      {
+        "id": 24,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaners female",
+        "species": "sheep",
+        "sort_order": 6
+      },
+      {
+        "id": 25,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding males",
+        "species": "sheep",
+        "sort_order": 7
+      },
+      {
+        "id": 26,
+        "name_sw": "Maksai",
+        "name_en": "Castrated males",
+        "species": "sheep",
+        "sort_order": 8
+      },
+      {
+        "id": 27,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young males",
+        "species": "sheep",
+        "sort_order": 9
+      }
+    ]
+  },
+  {
+    "test": "Create Opening Balance",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.850382",
+    "data": {
+      "id": 1,
+      "location_id": 1,
+      "species": "cattle",
+      "category_id": 1,
+      "count": 10,
+      "period_start": "2026-02-05",
+      "location_name": null,
+      "category_name_sw": null
+    }
+  },
+  {
+    "test": "List Stock Levels",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.892539",
+    "data": [
+      {
+        "id": 1,
+        "location_id": 1,
+        "species": "cattle",
+        "category_id": 1,
+        "current_count": 10,
+        "last_updated": "2026-02-05T08:13:39.833255",
+        "location_name": "Test Location 081339",
+        "category_name_sw": "Koo"
+      }
+    ]
+  },
+  {
+    "test": "List Daily Logs",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.932726"
+  },
+  {
+    "test": "Get Locations for Log",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:39.970974",
+    "data": [
+      {
+        "id": 1,
+        "name": "Test Location 081339",
+        "description": "Updated test location description",
+        "is_active": true,
+        "created_at": "2026-02-05T08:13:39.565392"
+      }
+    ]
+  },
+  {
+    "test": "Get Categories for Log",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:40.022613",
+    "data": [
+      {
+        "id": 1,
+        "name_sw": "Koo",
+        "name_en": "Cows",
+        "species": "cattle",
+        "sort_order": 1
+      },
+      {
+        "id": 2,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "cattle",
+        "sort_order": 2
+      },
+      {
+        "id": 3,
+        "name_sw": "Ndama Dume",
+        "name_en": "Bull calves",
+        "species": "cattle",
+        "sort_order": 3
+      },
+      {
+        "id": 4,
+        "name_sw": "Ndama Jike",
+        "name_en": "Heifer calves",
+        "species": "cattle",
+        "sort_order": 4
+      },
+      {
+        "id": 5,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaner bulls",
+        "species": "cattle",
+        "sort_order": 5
+      },
+      {
+        "id": 6,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaner heifers",
+        "species": "cattle",
+        "sort_order": 6
+      },
+      {
+        "id": 7,
+        "name_sw": "Maksai",
+        "name_en": "Steers",
+        "species": "cattle",
+        "sort_order": 7
+      },
+      {
+        "id": 8,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding bulls",
+        "species": "cattle",
+        "sort_order": 8
+      },
+      {
+        "id": 9,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young bulls",
+        "species": "cattle",
+        "sort_order": 9
+      },
+      {
+        "id": 10,
+        "name_sw": "Koo",
+        "name_en": "Does/Ewes",
+        "species": "goat",
+        "sort_order": 1
+      },
+      {
+        "id": 11,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "goat",
+        "sort_order": 2
+      },
+      {
+        "id": 12,
+        "name_sw": "Vichinda Dume",
+        "name_en": "Male kids/lambs",
+        "species": "goat",
+        "sort_order": 3
+      },
+      {
+        "id": 13,
+        "name_sw": "Vichinda Jike",
+        "name_en": "Female kids/lambs",
+        "species": "goat",
+        "sort_order": 4
+      },
+      {
+        "id": 14,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaners male",
+        "species": "goat",
+        "sort_order": 5
+      },
+      {
+        "id": 15,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaners female",
+        "species": "goat",
+        "sort_order": 6
+      },
+      {
+        "id": 16,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding males",
+        "species": "goat",
+        "sort_order": 7
+      },
+      {
+        "id": 17,
+        "name_sw": "Maksai",
+        "name_en": "Castrated males",
+        "species": "goat",
+        "sort_order": 8
+      },
+      {
+        "id": 18,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young males",
+        "species": "goat",
+        "sort_order": 9
+      },
+      {
+        "id": 19,
+        "name_sw": "Koo",
+        "name_en": "Does/Ewes",
+        "species": "sheep",
+        "sort_order": 1
+      },
+      {
+        "id": 20,
+        "name_sw": "Mitamba",
+        "name_en": "Heifers",
+        "species": "sheep",
+        "sort_order": 2
+      },
+      {
+        "id": 21,
+        "name_sw": "Vichinda Dume",
+        "name_en": "Male kids/lambs",
+        "species": "sheep",
+        "sort_order": 3
+      },
+      {
+        "id": 22,
+        "name_sw": "Vichinda Jike",
+        "name_en": "Female kids/lambs",
+        "species": "sheep",
+        "sort_order": 4
+      },
+      {
+        "id": 23,
+        "name_sw": "Achishwa Dume",
+        "name_en": "Weaners male",
+        "species": "sheep",
+        "sort_order": 5
+      },
+      {
+        "id": 24,
+        "name_sw": "Achishwa Jike",
+        "name_en": "Weaners female",
+        "species": "sheep",
+        "sort_order": 6
+      },
+      {
+        "id": 25,
+        "name_sw": "Dume Mbegu",
+        "name_en": "Breeding males",
+        "species": "sheep",
+        "sort_order": 7
+      },
+      {
+        "id": 26,
+        "name_sw": "Maksai",
+        "name_en": "Castrated males",
+        "species": "sheep",
+        "sort_order": 8
+      },
+      {
+        "id": 27,
+        "name_sw": "Dume Wadogo",
+        "name_en": "Young males",
+        "species": "sheep",
+        "sort_order": 9
+      }
+    ]
+  },
+  {
+    "test": "Create Daily Log with Events",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:40.077843",
+    "data": {
+      "id": 1,
+      "location_id": 1,
+      "log_date": "2026-02-05",
+      "has_events": true,
+      "notes": "Test daily log from API testing",
+      "is_locked": false,
+      "created_at": "2026-02-05T08:13:40.060182",
+      "location_name": null,
+      "events": []
+    }
+  },
+  {
+    "test": "Get Daily Log",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:40.118766",
+    "data": {
+      "id": 1,
+      "location_id": 1,
+      "log_date": "2026-02-05",
+      "has_events": true,
+      "notes": "Test daily log from API testing",
+      "is_locked": false,
+      "created_at": "2026-02-05T08:13:40.060182",
+      "location_name": "Test Location 081339",
+      "events": [
+        {
+          "id": 1,
+          "event_type": "birth",
+          "species": "cattle",
+          "category_id": 1,
+          "count": 2,
+          "from_location_id": null,
+          "to_location_id": null,
+          "from_category_id": null,
+          "to_category_id": null,
+          "notes": "Test birth event",
+          "is_stock_event": true,
+          "created_at": "2026-02-05T08:13:40.061860",
+          "category_name_sw": "Koo",
+          "from_category_name_sw": null,
+          "to_category_name_sw": null,
+          "from_location_name": null,
+          "to_location_name": null
+        }
+      ]
+    }
+  },
+  {
+    "test": "Get Dashboard",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:40.163191",
+    "data": {
+      "species_totals": [
+        {
+          "species": "cattle",
+          "total": 12,
+          "color": "#2D5A27"
+        },
+        {
+          "species": "sheep",
+          "total": 0,
+          "color": "#0284C7"
+        },
+        {
+          "species": "goat",
+          "total": 0,
+          "color": "#D97706"
+        }
+      ],
+      "location_totals": [
+        {
+          "location_id": 1,
+          "location_name": "Test Location 081339",
+          "cattle": 12,
+          "sheep": 0,
+          "goat": 0,
+          "total": 12
+        }
+      ],
+      "today_events": [
+        {
+          "event_type": "birth",
+          "count": 1,
+          "stock_change": 2
+        }
+      ],
+      "total_animals": 12,
+      "total_locations": 1,
+      "pending_logs_today": 0
+    }
+  },
+  {
+    "test": "List Users (Admin)",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:40.209301",
+    "data": [
+      {
+        "id": 1,
+        "phone": "255700000000",
+        "name": "Admin",
+        "role": "admin",
+        "is_active": true,
+        "created_at": "2026-02-05T08:06:01.279332"
+      }
+    ]
+  },
+  {
+    "test": "Daily Report",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:40.251987",
+    "data": {
+      "date": "2026-02-05",
+      "stock_by_location": {
+        "Test Location 081339": {
+          "cattle": 12,
+          "sheep": 0,
+          "goat": 0
+        }
+      },
+      "events_by_location": {
+        "Test Location 081339": [
+          {
+            "type": "birth",
+            "species": "cattle",
+            "count": 2,
+            "notes": "Test birth event"
+          }
+        ]
+      },
+      "total_logs": 1
+    }
+  },
+  {
+    "test": "Range Report",
+    "success": true,
+    "status_code": 200,
+    "error": null,
+    "timestamp": "2026-02-05T08:13:40.291429",
+    "data": {
+      "start_date": "2026-02-05",
+      "end_date": "2026-02-05",
+      "events_by_type": {
+        "birth": {
+          "count": 1,
+          "total_animals": 2
+        }
+      },
+      "net_movements": {
+        "cattle": 2,
+        "sheep": 0,
+        "goat": 0
+      },
+      "total_events": 1
+    }
+  }
+]

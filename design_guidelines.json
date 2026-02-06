@@ -1,0 +1,147 @@
+{
+  "identity": {
+    "app_name": "ShambaManager",
+    "tone": "Professional, Grounded, Earthy, Reliable",
+    "description": "A livestock management system designed for the Tanzanian landscape. It prioritizes clarity, data integrity, and ease of use in field conditions.",
+    "archetype": "Organic & Earthy"
+  },
+  "typography": {
+    "font_family_headings": "Outfit, sans-serif",
+    "font_family_body": "Plus Jakarta Sans, sans-serif",
+    "font_url_headings": "https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap",
+    "font_url_body": "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap",
+    "scale": {
+      "h1": "text-4xl md:text-5xl font-bold tracking-tight",
+      "h2": "text-3xl font-semibold tracking-tight",
+      "h3": "text-2xl font-semibold",
+      "h4": "text-xl font-medium",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm text-muted-foreground",
+      "label": "text-xs font-bold uppercase tracking-widest text-muted-foreground"
+    }
+  },
+  "colors": {
+    "palette": {
+      "primary": {
+        "DEFAULT": "#2D5A27",
+        "foreground": "#FFFFFF",
+        "50": "#F2FCF5",
+        "100": "#E6F7EB",
+        "500": "#2D5A27",
+        "600": "#1E421B",
+        "900": "#0D200C"
+      },
+      "secondary": {
+        "DEFAULT": "#D97706",
+        "foreground": "#FFFFFF",
+        "100": "#FEF3C7",
+        "500": "#D97706",
+        "900": "#78350F"
+      },
+      "accent": {
+        "DEFAULT": "#F4F1DE",
+        "foreground": "#2D5A27"
+      },
+      "background": "#FDFBF7",
+      "foreground": "#1F2937",
+      "card": "#FFFFFF",
+      "card_foreground": "#1F2937",
+      "border": "#E5E7EB",
+      "input": "#F3F4F6",
+      "ring": "#2D5A27",
+      "destructive": "#EF4444"
+    },
+    "semantic": {
+      "success": "#059669",
+      "warning": "#D97706",
+      "error": "#DC2626",
+      "info": "#2563EB",
+      "cattle": "#2D5A27",
+      "goat": "#D97706",
+      "sheep": "#0284C7"
+    }
+  },
+  "layout": {
+    "spacing_scale": {
+      "page_padding": "p-4 md:p-8 lg:p-12",
+      "section_gap": "gap-8 md:gap-12",
+      "element_gap": "gap-4"
+    },
+    "container": {
+      "max_width": "max-w-7xl mx-auto",
+      "card_padding": "p-6 md:p-8"
+    },
+    "grid_strategies": {
+      "dashboard": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6",
+      "bento_hero": "col-span-1 md:col-span-2 lg:col-span-8",
+      "bento_side": "col-span-1 md:col-span-2 lg:col-span-4",
+      "form_layout": "grid grid-cols-1 md:grid-cols-2 gap-8"
+    },
+    "border_radius": {
+      "card": "rounded-xl",
+      "button": "rounded-lg",
+      "input": "rounded-md"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm transition-all duration-200 ease-in-out px-6 py-2.5 font-medium rounded-lg active:scale-95",
+      "secondary": "bg-secondary text-secondary-foreground hover:bg-secondary/90 shadow-sm transition-all duration-200 ease-in-out px-6 py-2.5 font-medium rounded-lg active:scale-95",
+      "outline": "border-2 border-primary/20 bg-transparent hover:bg-primary/5 text-primary transition-all duration-200 px-6 py-2.5 font-medium rounded-lg",
+      "ghost": "hover:bg-accent hover:text-accent-foreground transition-all duration-200 px-4 py-2 font-medium rounded-lg"
+    },
+    "cards": {
+      "base": "bg-card text-card-foreground rounded-xl border border-border/60 shadow-sm hover:shadow-md transition-shadow duration-300 p-6 relative overflow-hidden",
+      "interactive": "cursor-pointer hover:border-primary/50 hover:shadow-lg transition-all duration-300"
+    },
+    "inputs": {
+      "base": "flex h-11 w-full rounded-md border border-input bg-white px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200"
+    },
+    "badges": {
+      "base": "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+      "stock_count": "bg-primary/10 text-primary border-primary/20",
+      "alert": "bg-destructive/10 text-destructive border-destructive/20"
+    }
+  },
+  "visual_enhancers": {
+    "shadows": {
+      "subtle": "shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)]",
+      "deep": "shadow-[0_8px_30px_rgb(0,0,0,0.04)]"
+    },
+    "textures": {
+      "noise": "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E\")"
+    },
+    "gradients": {
+      "subtle_fade": "bg-gradient-to-b from-transparent to-background/80"
+    }
+  },
+  "assets": {
+    "image_urls": {
+      "login_bg": "https://images.unsplash.com/photo-1765260906174-8974527cf134?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwyfHxUYW56YW5pYW4lMjBsYW5kc2NhcGUlMjBhZ3JpY3VsdHVyZSUyMHNhdmFubmFofGVufDB8fHx8MTc3MDI3ODA3MXww&ixlib=rb-4.1.0&q=85",
+      "cattle_hero": "https://images.unsplash.com/photo-1528536875348-ceb326e1fca9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjh8MHwxfHNlYXJjaHwyfHxUYW56YW5pYW4lMjBjYXR0bGUlMjBoZXJkJTIwZ3JhemluZ3xlbnwwfHx8fDE3NzAyNzgwNjl8MA&ixlib=rb-4.1.0&q=85",
+      "wild_header": "https://images.unsplash.com/photo-1560440976-a8a309ea5837?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjh8MHwxfHNlYXJjaHw0fHxUYW56YW5pYW4lMjBjYXR0bGUlMjBoZXJkJTIwZ3JhemluZ3xlbnwwfHx8fDE3NzAyNzgwNjl8MA&ixlib=rb-4.1.0&q=85",
+      "goats_hero": "https://images.unsplash.com/photo-1762571808926-2555640f12a6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwzfHxHb2F0JTIwZmFybSUyMG91dGRvb3IlMjBuYXR1cmFsfGVufDB8fHx8MTc3MDI3ODA2OXww&ixlib=rb-4.1.0&q=85",
+      "sheep_hero": "https://images.unsplash.com/photo-1764081107140-0543f87df2c1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHw0fHxTaGVlcCUyMGZsb2NrJTIwcGFzdHVyZXxlbnwwfHx8fDE3NzAyNzgwNzB8MA&ixlib=rb-4.1.0&q=85"
+    },
+    "icons_library": "phosphor-react",
+    "logo_placeholder": "Use a simple typographic logo with a leaf or hoof icon in Primary color"
+  },
+  "instructions_to_main_agent": [
+    "Install dependencies: `npm install @phosphor-icons/react` or `yarn add @phosphor-icons/react`.",
+    "Install fonts by adding the Google Fonts links to `public/index.html` or importing in `index.css`.",
+    "Update `tailwind.config.js` with the provided color palette and border radius variables.",
+    "Use the 'Bento Grid' layout for the Dashboard: Total Stock (Big), Events (Tall), Locations (Square).",
+    "Ensure ALL forms have large touch targets (min 44px height) for ease of use in the field.",
+    "Implement the Login page with the `login_bg` image as a side panel or background overlay.",
+    "Use 'Outfit' font for all Headings (h1-h4) and 'Plus Jakarta Sans' for body text.",
+    "For the 'Daily Log', use a Step-by-Step wizard approach (Location -> Date -> Events) to avoid overwhelming the user.",
+    "Use distinct colors for species: Cattle (Green), Goat (Orange/Terracotta), Sheep (Blue/Sky) to make charts readable."
+  ],
+  "universal_guidelines": [
+    "Do not use gradients for main backgrounds; use flat colors or subtle noise textures.",
+    "Avoid 'Inter' font; strictly use the specified fonts.",
+    "No teal/purple combinations.",
+    "Ensure high contrast for outdoor visibility (WCAG AA compliant).",
+    "Add 'data-testid' to all interactive elements."
+  ]
+}

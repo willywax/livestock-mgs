@@ -1,0 +1,3 @@
+
+
+psql 'postgresql://neondb_owner:npg_5au3LlPGHbSk@ep-autumn-mud-ai53lydm-pooler.c-4.us-east-1.aws.neon.tech/stock_movement?sslmode=require&channel_binding=require'

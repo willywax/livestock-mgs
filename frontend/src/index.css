@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --background: 40 33% 98%;
+        --foreground: 220 13% 18%;
+        --card: 0 0% 100%;
+        --card-foreground: 220 13% 18%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 220 13% 18%;
+        --primary: 117 38% 25%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 32 93% 44%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 220 9% 93%;
+        --muted-foreground: 220 9% 46%;
+        --accent: 47 50% 91%;
+        --accent-foreground: 117 38% 25%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 220 13% 91%;
+        --input: 220 13% 96%;
+        --ring: 117 38% 25%;
+        --radius: 0.5rem;
+        --chart-1: 117 38% 25%;
+        --chart-2: 32 93% 44%;
+        --chart-3: 199 89% 40%;
+        --chart-4: 43 74% 66%;
+        --chart-5: 27 87% 67%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+        font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Outfit', sans-serif;
+    }
+}
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+}

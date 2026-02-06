@@ -1,0 +1,389 @@
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, List
+from datetime import datetime, date
+from models import UserRole, EventType, SpeciesType, AbortionStage
+
+# Auth schemas
+class UserLogin(BaseModel):
+    phone: str
+    password: str
+
+class UserCreate(BaseModel):
+    phone: str
+    password: str
+    name: str
+    role: UserRole = UserRole.VIEWER
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    phone: str
+    name: str
+    role: UserRole
+    is_active: bool
+    created_at: datetime
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+# Location schemas
+class LocationCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class LocationUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class LocationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    description: Optional[str]
+    is_active: bool
+    created_at: datetime
+
+# Category schemas
+class CategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name_sw: str
+    name_en: str
+    species: SpeciesType
+    sort_order: int
+
+# Opening Balance schemas
+class OpeningBalanceCreate(BaseModel):
+    location_id: int
+    species: SpeciesType
+    category_id: int
+    count: int
+    period_start: date
+
+class OpeningBalanceUpdate(BaseModel):
+    count: int
+
+class OpeningBalanceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    location_id: int
+    species: SpeciesType
+    category_id: int
+    count: int
+    period_start: date
+    location_name: Optional[str] = None
+    category_name_sw: Optional[str] = None
+
+# Disease schemas
+class DiseaseCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    species: Optional[SpeciesType] = None
+
+class DiseaseResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    description: Optional[str]
+    species: Optional[SpeciesType]
+    is_active: bool
+
+# Event schemas
+class EventCreate(BaseModel):
+    event_type: EventType
+    species: SpeciesType
+    category_id: Optional[int] = None
+    count: int = 0
+    from_location_id: Optional[int] = None
+    to_location_id: Optional[int] = None
+    from_category_id: Optional[int] = None
+    to_category_id: Optional[int] = None
+    notes: Optional[str] = None
+    is_stock_event: bool = True
+    # Common field for all events
+    animal_tags: Optional[str] = None
+    # Death-specific
+    cause_of_death: Optional[str] = None
+    disease_id: Optional[int] = None  # If cause is "disease"
+    days_sick: Optional[int] = None
+    attending_vet: Optional[str] = None
+    # Abortion-specific
+    abortion_stage: Optional[AbortionStage] = None  # early, mid, late
+    # Birth-specific
+    mother_tag: Optional[str] = None
+    offspring_tags: Optional[str] = None
+    # Sale-specific
+    buyer_name: Optional[str] = None
+    buyer_phone: Optional[str] = None
+    buyer_address: Optional[str] = None
+    sale_price: Optional[int] = None
+
+class EventUpdate(BaseModel):
+    event_type: Optional[EventType] = None
+    species: Optional[SpeciesType] = None
+    category_id: Optional[int] = None
+    count: Optional[int] = None
+    from_location_id: Optional[int] = None
+    to_location_id: Optional[int] = None
+    from_category_id: Optional[int] = None
+    to_category_id: Optional[int] = None
+    notes: Optional[str] = None
+    animal_tags: Optional[str] = None
+    cause_of_death: Optional[str] = None
+    disease_id: Optional[int] = None
+    days_sick: Optional[int] = None
+    attending_vet: Optional[str] = None
+    abortion_stage: Optional[AbortionStage] = None
+    mother_tag: Optional[str] = None
+    offspring_tags: Optional[str] = None
+    buyer_name: Optional[str] = None
+    buyer_phone: Optional[str] = None
+    buyer_address: Optional[str] = None
+    sale_price: Optional[int] = None
+
+class EventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    event_type: EventType
+    species: SpeciesType
+    category_id: Optional[int]
+    count: int
+    from_location_id: Optional[int]
+    to_location_id: Optional[int]
+    from_category_id: Optional[int]
+    to_category_id: Optional[int]
+    notes: Optional[str]
+    is_stock_event: bool
+    created_at: datetime
+    category_name_sw: Optional[str] = None
+    from_category_name_sw: Optional[str] = None
+    to_category_name_sw: Optional[str] = None
+    from_location_name: Optional[str] = None
+    to_location_name: Optional[str] = None
+    # Additional fields
+    animal_tags: Optional[str] = None
+    cause_of_death: Optional[str] = None
+    disease_id: Optional[int] = None
+    disease_name: Optional[str] = None
+    days_sick: Optional[int] = None
+    attending_vet: Optional[str] = None
+    abortion_stage: Optional[AbortionStage] = None
+    mother_tag: Optional[str] = None
+    offspring_tags: Optional[str] = None
+    buyer_name: Optional[str] = None
+    buyer_phone: Optional[str] = None
+    buyer_address: Optional[str] = None
+    sale_price: Optional[int] = None
+
+# Daily Log schemas
+class DailyLogCreate(BaseModel):
+    location_id: int
+    log_date: date
+    has_events: bool = False
+    notes: Optional[str] = None
+    events: List[EventCreate] = []
+
+class DailyLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    location_id: int
+    log_date: date
+    has_events: bool
+    notes: Optional[str]
+    is_locked: bool
+    created_at: datetime
+    location_name: Optional[str] = None
+    events: List[EventResponse] = []
+
+# Stock Level schemas
+class StockLevelResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    location_id: int
+    species: SpeciesType
+    category_id: int
+    current_count: int
+    last_updated: datetime
+    location_name: Optional[str] = None
+    category_name_sw: Optional[str] = None
+
+# Dashboard schemas
+class SpeciesTotals(BaseModel):
+    species: SpeciesType
+    total: int
+    color: str
+
+class CategoryTotal(BaseModel):
+    category_id: int
+    category_name_sw: str
+    count: int
+
+class SpeciesCategoryTotals(BaseModel):
+    species: SpeciesType
+    categories: List[CategoryTotal]
+    total: int
+
+class LocationTotals(BaseModel):
+    location_id: int
+    location_name: str
+    cattle: int
+    sheep: int
+    goat: int
+    total: int
+
+class EventSummary(BaseModel):
+    event_type: EventType
+    count: int
+    stock_change: int
+
+class HerdPerformance(BaseModel):
+    species: SpeciesType
+    total_stock: int
+    breeding_females: int
+    births_30d: int
+    deaths_30d: int
+    calving_rate: float
+    mortality_rate: float
+    color: str
+
+class NetChange(BaseModel):
+    species: SpeciesType
+    births: int
+    deaths: int
+    bought: int
+    sold: int
+    gift_in: int
+    gift_out: int
+    missing: int
+    weaned: int
+    net_change: int  # births + bought + gift_in - deaths - sold - gift_out - missing
+
+class DashboardResponse(BaseModel):
+    species_totals: List[SpeciesTotals]
+    species_category_totals: List[SpeciesCategoryTotals]
+    location_totals: List[LocationTotals]
+    today_events: List[EventSummary]
+    total_animals: int
+    total_locations: int
+    pending_logs_today: int
+    herd_performance: List[HerdPerformance]
+    net_changes: List[NetChange]
+    selected_location_id: Optional[int] = None
+    selected_location_name: Optional[str] = None
+
+# Report schemas
+class DateRangeReport(BaseModel):
+    start_date: date
+    end_date: date
+    events_by_type: dict
+    net_movements: dict
+    location_summaries: List[dict]
+
+class SpeciesRates(BaseModel):
+    species: SpeciesType
+    total_stock: int
+    breeding_females: int
+    births: int
+    deaths: int
+    weaned: int
+    sold: int
+    bought: int
+    calving_rate: float  # births / breeding females * 100
+    mortality_rate: float  # deaths / total stock * 100
+    weaning_rate: float  # weaned / births * 100
+    color: str
+
+class DeathByCategory(BaseModel):
+    category_id: int
+    category_name_sw: str
+    count: int
+    percentage: float
+
+class DeathByCause(BaseModel):
+    cause: str
+    count: int
+    percentage: float
+    avg_days_sick: Optional[float] = None
+
+class DeathByDisease(BaseModel):
+    disease_id: int
+    disease_name: str
+    count: int
+    percentage: float
+    avg_days_sick: Optional[float] = None
+
+class DeathBySpecies(BaseModel):
+    species: SpeciesType
+    total_deaths: int
+    by_category: List[DeathByCategory]
+    by_cause: List[DeathByCause]
+    by_disease: List[DeathByDisease]  # Detailed disease breakdown
+    with_vet_attendance: int
+    without_vet_attendance: int
+    avg_days_sick: Optional[float] = None
+
+class DeathAnalysis(BaseModel):
+    total_deaths: int
+    by_species: List[DeathBySpecies]
+    top_causes: List[DeathByCause]
+    top_diseases: List[DeathByDisease]  # Top diseases across all species
+    vet_attendance_rate: float
+
+# Abortion Analytics
+class AbortionByStage(BaseModel):
+    stage: AbortionStage
+    count: int
+    percentage: float
+
+class AbortionBySpecies(BaseModel):
+    species: SpeciesType
+    total_abortions: int
+    by_stage: List[AbortionByStage]
+    by_category: List[DeathByCategory]  # Reuse for category breakdown
+    abortion_rate: float  # abortions / breeding females * 100
+
+class AbortionAnalysis(BaseModel):
+    total_abortions: int
+    by_species: List[AbortionBySpecies]
+    by_stage: List[AbortionByStage]  # Overall stage breakdown
+
+# Sales Analytics
+class SalesBySpecies(BaseModel):
+    species: SpeciesType
+    count: int
+    total_value: int
+    average_price: float
+    by_category: List[dict]  # [{category_name_sw, count, total_value, avg_price}]
+
+class SalesByBuyer(BaseModel):
+    buyer_name: str
+    count: int
+    total_value: int
+    species_breakdown: dict  # {species: count}
+
+class SalesAnalysis(BaseModel):
+    total_count: int
+    total_value: int
+    average_price: float
+    by_species: List[SalesBySpecies]
+    top_buyers: List[SalesByBuyer]
+    price_range: dict  # {min, max, median}
+
+class AnalyticsResponse(BaseModel):
+    period_start: date
+    period_end: date
+    species_rates: List[SpeciesRates]
+    death_analysis: DeathAnalysis
+    abortion_analysis: AbortionAnalysis
+    sales_analysis: SalesAnalysis
+    net_changes: List[NetChange]
+    location_id: Optional[int] = None
+    location_name: Optional[str] = None
