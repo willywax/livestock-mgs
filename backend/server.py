@@ -383,6 +383,7 @@ async def import_opening_balances(
     created = 0
     updated = 0
     errors = []
+    recompute_keys = set()
     
     for row_num, row in enumerate(reader, start=2):
         try:
@@ -457,34 +458,18 @@ async def import_opening_balances(
                     created_by=current_user.id
                 )
                 db.add(balance)
-                
-                # Also create/update stock level
-                stock_result = await db.execute(
-                    select(StockLevel).where(
-                        and_(
-                            StockLevel.location_id == location.id,
-                            StockLevel.species == species,
-                            StockLevel.category_id == category.id
-                        )
-                    )
-                )
-                stock = stock_result.scalar_one_or_none()
-                if stock:
-                    stock.current_count = count
-                else:
-                    stock = StockLevel(
-                        location_id=location.id,
-                        species=species,
-                        category_id=category.id,
-                        current_count=count
-                    )
-                    db.add(stock)
-                
+
                 created += 1
+
+            recompute_keys.add((location.id, species, category.id))
                 
         except Exception as e:
             errors.append(f"Row {row_num}: {str(e)}")
     
+    await db.flush()
+    for key_location_id, key_species, key_category_id in recompute_keys:
+        await update_stock_level(db, key_location_id, key_species, key_category_id)
+
     await db.commit()
     
     return {
@@ -657,6 +642,7 @@ async def create_opening_balance(
         created_by=current_user.id
     )
     db.add(balance)
+    await db.flush()
     
     # Also create/update stock level
     await update_stock_level(db, data.location_id, data.species, data.category_id)
@@ -1165,6 +1151,17 @@ async def list_stock_levels(
         )
         for sl in levels
     ]
+
+@api_router.post("/stock-levels/recompute")
+async def recompute_stock_levels_endpoint(
+    location_id: Optional[int] = None,
+    species: Optional[SpeciesType] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN))
+):
+    updated = await recompute_stock_levels(db, location_id=location_id, species=species)
+    await db.commit()
+    return {"message": "Stock levels recomputed", "updated": updated}
 
 # ==================== DASHBOARD ROUTES ====================
 @api_router.get("/dashboard", response_model=DashboardResponse)
@@ -1924,7 +1921,7 @@ async def check_stock_availability(
                 return True, "Warning: Stock will go negative (Admin override)"
             return False, f"Insufficient stock: only {current} available at source location"
     
-    elif event_data.event_type == EventType.CATEGORY_CHANGE:
+    elif event_data.event_type in [EventType.CATEGORY_CHANGE, EventType.WEANING]:
         # Check from_category stock
         result = await db.execute(
             select(StockLevel).where(
@@ -1988,7 +1985,7 @@ async def apply_event_to_stock(
             event_data.count
         )
     
-    elif event_data.event_type == EventType.CATEGORY_CHANGE:
+    elif event_data.event_type in [EventType.CATEGORY_CHANGE, EventType.WEANING]:
         # Subtract from source category
         await adjust_stock(
             db,
@@ -2051,7 +2048,7 @@ async def reverse_event_stock(
             -event_data.count
         )
     
-    elif event_data.event_type == EventType.CATEGORY_CHANGE:
+    elif event_data.event_type in [EventType.CATEGORY_CHANGE, EventType.WEANING]:
         # Add back to source category
         await adjust_stock(
             db,
@@ -2120,50 +2117,158 @@ async def adjust_stock(
         )
         db.add(stock)
 
+def event_stock_adjustments(
+    event: Event,
+    log_location_id: int
+) -> List[tuple[int, SpeciesType, int, int]]:
+    adjustments = []
+    if not event.is_stock_event:
+        return adjustments
+
+    if event.event_type == EventType.TRANSFER:
+        if event.from_location_id and event.category_id:
+            adjustments.append((event.from_location_id, event.species, event.category_id, -event.count))
+        if event.to_location_id and event.category_id:
+            adjustments.append((event.to_location_id, event.species, event.category_id, event.count))
+    elif event.event_type in [EventType.CATEGORY_CHANGE, EventType.WEANING]:
+        if event.from_category_id:
+            adjustments.append((log_location_id, event.species, event.from_category_id, -event.count))
+        if event.to_category_id:
+            adjustments.append((log_location_id, event.species, event.to_category_id, event.count))
+    elif event.event_type in [EventType.BIRTH, EventType.GIFT_IN, EventType.BOUGHT]:
+        if event.category_id:
+            adjustments.append((log_location_id, event.species, event.category_id, event.count))
+    elif event.event_type in [EventType.DEATH, EventType.SOLD, EventType.MISSING, EventType.GIFT_OUT]:
+        if event.category_id:
+            adjustments.append((log_location_id, event.species, event.category_id, -event.count))
+
+    return adjustments
+
+async def recompute_stock_levels(
+    db: AsyncSession,
+    location_id: Optional[int] = None,
+    species: Optional[SpeciesType] = None,
+    category_id: Optional[int] = None
+) -> int:
+    """Recompute stock levels from opening balances and stock-impacting events."""
+    openings_query = select(OpeningBalance)
+    if location_id:
+        openings_query = openings_query.where(OpeningBalance.location_id == location_id)
+    if species:
+        openings_query = openings_query.where(OpeningBalance.species == species)
+    if category_id:
+        openings_query = openings_query.where(OpeningBalance.category_id == category_id)
+    openings_query = openings_query.order_by(OpeningBalance.period_start.desc())
+    result = await db.execute(openings_query)
+    openings = result.scalars().all()
+
+    latest_openings = {}
+    for opening in openings:
+        key = (opening.location_id, opening.species, opening.category_id)
+        if key not in latest_openings:
+            latest_openings[key] = {
+                "count": opening.count,
+                "start": opening.period_start
+            }
+
+    levels_query = select(StockLevel)
+    if location_id:
+        levels_query = levels_query.where(StockLevel.location_id == location_id)
+    if species:
+        levels_query = levels_query.where(StockLevel.species == species)
+    if category_id:
+        levels_query = levels_query.where(StockLevel.category_id == category_id)
+    result = await db.execute(levels_query)
+    existing_levels = result.scalars().all()
+
+    current = dict(latest_openings)
+    for level in existing_levels:
+        key = (level.location_id, level.species, level.category_id)
+        if key not in current:
+            current[key] = {"count": 0, "start": date.min}
+
+    events_query = (
+        select(Event, DailyLog.log_date, DailyLog.location_id)
+        .join(DailyLog)
+        .order_by(DailyLog.log_date.asc(), Event.id.asc())
+    )
+    if species:
+        events_query = events_query.where(Event.species == species)
+    if location_id:
+        events_query = events_query.where(
+            or_(
+                DailyLog.location_id == location_id,
+                Event.from_location_id == location_id,
+                Event.to_location_id == location_id
+            )
+        )
+    if category_id:
+        events_query = events_query.where(
+            or_(
+                Event.category_id == category_id,
+                Event.from_category_id == category_id,
+                Event.to_category_id == category_id
+            )
+        )
+
+    result = await db.execute(events_query)
+    events = result.all()
+
+    for event, log_date, log_location_id in events:
+        for adj_location_id, adj_species, adj_category_id, delta in event_stock_adjustments(event, log_location_id):
+            if location_id and adj_location_id != location_id:
+                continue
+            if species and adj_species != species:
+                continue
+            if category_id and adj_category_id != category_id:
+                continue
+
+            key = (adj_location_id, adj_species, adj_category_id)
+            if key not in current:
+                current[key] = {"count": 0, "start": date.min}
+            if log_date < current[key]["start"]:
+                continue
+            current[key]["count"] += delta
+
+    existing_map = {(sl.location_id, sl.species, sl.category_id): sl for sl in existing_levels}
+    updated = 0
+    for key, data in current.items():
+        if location_id and key[0] != location_id:
+            continue
+        if species and key[1] != species:
+            continue
+        if category_id and key[2] != category_id:
+            continue
+
+        stock = existing_map.get(key)
+        if stock:
+            stock.current_count = data["count"]
+            stock.last_updated = datetime.now(timezone.utc)
+        else:
+            stock = StockLevel(
+                location_id=key[0],
+                species=key[1],
+                category_id=key[2],
+                current_count=data["count"]
+            )
+            db.add(stock)
+        updated += 1
+
+    return updated
+
 async def update_stock_level(
     db: AsyncSession,
     location_id: int,
     species: SpeciesType,
     category_id: int
 ):
-    """Recalculate stock level from opening balance + events"""
-    # Get opening balance
-    result = await db.execute(
-        select(OpeningBalance).where(
-            and_(
-                OpeningBalance.location_id == location_id,
-                OpeningBalance.species == species,
-                OpeningBalance.category_id == category_id
-            )
-        ).order_by(OpeningBalance.period_start.desc())
+    """Recalculate stock level from opening balance + events."""
+    await recompute_stock_levels(
+        db,
+        location_id=location_id,
+        species=species,
+        category_id=category_id
     )
-    opening = result.scalar_one_or_none()
-    opening_count = opening.count if opening else 0
-    
-    # Get all events affecting this stock
-    # This is simplified - in production you'd calculate from opening date
-    result = await db.execute(
-        select(StockLevel).where(
-            and_(
-                StockLevel.location_id == location_id,
-                StockLevel.species == species,
-                StockLevel.category_id == category_id
-            )
-        )
-    )
-    stock = result.scalar_one_or_none()
-    
-    if stock:
-        stock.current_count = opening_count
-        stock.last_updated = datetime.now(timezone.utc)
-    else:
-        stock = StockLevel(
-            location_id=location_id,
-            species=species,
-            category_id=category_id,
-            current_count=opening_count
-        )
-        db.add(stock)
 
 # Include router
 app.include_router(api_router)

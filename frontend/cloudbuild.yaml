@@ -1,0 +1,11 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "gcr.io/elitagroup/srcstock"
+      - "--build-arg"
+      - "REACT_APP_BACKEND_URL=https://shamba-backend-883901859223.us-central1.run.app"
+      - "."
+images:
+  - "gcr.io/elitagroup/srcstock"
