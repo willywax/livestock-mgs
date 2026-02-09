@@ -182,6 +182,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState('all');
+  const [selectedPeriod, setSelectedPeriod] = useState('30');
   const { isDataEntry } = useAuth();
 
   useEffect(function() {
@@ -190,7 +191,7 @@ function Dashboard() {
 
   useEffect(function() {
     loadDashboard();
-  }, [selectedLocation]);
+  }, [selectedLocation, selectedPeriod]);
 
   async function loadLocations() {
     try {
@@ -208,6 +209,10 @@ function Dashboard() {
       if (selectedLocation && selectedLocation !== 'all') {
         params.location_id = selectedLocation;
       }
+      const periodDays = parseInt(selectedPeriod, 10);
+      if (!Number.isNaN(periodDays)) {
+        params.period_days = periodDays;
+      }
       const response = await getDashboard(params);
       setData(response.data);
     } catch (error) {
@@ -217,7 +222,10 @@ function Dashboard() {
     }
   }
 
-  if (loading) {
+  const isInitialLoading = loading && !data;
+  const isRefreshing = loading && data;
+
+  if (isInitialLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-10 w-64" />
@@ -236,6 +244,7 @@ function Dashboard() {
   const locationTotals = data?.location_totals || [];
   const herdPerformance = data?.herd_performance || [];
   const netChanges = data?.net_changes || [];
+  const periodDays = parseInt(selectedPeriod, 10) || 30;
   
   // Build arrays to avoid nested maps
   const speciesCards = [];
@@ -264,7 +273,9 @@ function Dashboard() {
   
   const locationItems = [];
   for (let i = 0; i < locationTotals.length; i++) {
-    locationItems.push(<LocationItem key={locationTotals[i].location_id} location={locationTotals[i]} />);
+    if (locationTotals[i].total > 0) {
+      locationItems.push(<LocationItem key={locationTotals[i].location_id} location={locationTotals[i]} />);
+    }
   }
   
   const locationOptions = [];
@@ -286,6 +297,18 @@ function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+            <SelectTrigger className="w-[180px]" data-testid="period-filter">
+              <SelectValue placeholder="Last 30 Days" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7">Last 7 Days</SelectItem>
+              <SelectItem value="30">Last 30 Days</SelectItem>
+              <SelectItem value="90">Last 90 Days</SelectItem>
+              <SelectItem value="180">Last 180 Days</SelectItem>
+              <SelectItem value="365">Last 365 Days</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={selectedLocation} onValueChange={setSelectedLocation}>
             <SelectTrigger className="w-[200px]" data-testid="location-filter">
               <MapPin className="h-4 w-4 mr-2 text-muted-foreground" />
@@ -314,96 +337,118 @@ function Dashboard() {
         </div>
       )}
 
-      <div>
-        <h2 className="font-heading text-xl font-semibold mb-4 flex items-center gap-2">
-          <Heartbeat className="h-5 w-5 text-primary" />
-          Herd Performance (Last 30 Days)
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {perfCards}
+      {isRefreshing ? (
+        <div className="space-y-6" aria-live="polite">
+          <Skeleton className="h-6 w-64" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Skeleton className="h-44" />
+            <Skeleton className="h-44" />
+            <Skeleton className="h-44" />
+            <Skeleton className="h-44" />
+          </div>
+          <Skeleton className="h-48" />
+          <Skeleton className="h-28" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Skeleton className="h-36" />
+            <Skeleton className="h-36" />
+            <Skeleton className="h-36" />
+            <Skeleton className="h-36" />
+          </div>
         </div>
-      </div>
-
-      {netCards.length > 0 && (
-        <Card className="border-border/60" data-testid="net-changes-card">
-          <CardHeader>
-            <CardTitle className="font-heading flex items-center gap-2">
-              <TrendUp className="h-5 w-5 text-primary" />
-              Net Change in Animals (Last 30 Days)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+      ) : (
+        <>
+          <div>
+            <h2 className="font-heading text-xl font-semibold mb-4 flex items-center gap-2">
+              <Heartbeat className="h-5 w-5 text-primary" />
+              Herd Performance (Last {periodDays} Days)
+            </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {netCards}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card className="border-border/60" data-testid="total-animals-card">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Total Animals</p>
-              <p className="text-4xl font-bold font-heading mt-1">{data?.total_animals || 0}</p>
-            </div>
-            <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
-              <Cow className="h-8 w-8 text-primary" weight="fill" />
+              {perfCards}
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {speciesCards}
-      </div>
+          {netCards.length > 0 && (
+            <Card className="border-border/60" data-testid="net-changes-card">
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center gap-2">
+                  <TrendUp className="h-5 w-5 text-primary" />
+                  Net Change in Animals (Last {periodDays} Days)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {netCards}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
-      {catSections.length > 0 && (
-        <Card className="border-border/60" data-testid="category-breakdown-card">
-          <CardHeader>
-            <CardTitle className="font-heading flex items-center gap-2">
-              <Cow className="h-5 w-5 text-primary" />
-              Summary by Category
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {catSections}
-          </CardContent>
-        </Card>
-      )}
+          <Card className="border-border/60" data-testid="total-animals-card">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Total Animals</p>
+                  <p className="text-4xl font-bold font-heading mt-1">{data?.total_animals || 0}</p>
+                </div>
+                <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Cow className="h-8 w-8 text-primary" weight="fill" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-      {selectedLocation === 'all' && locationItems.length > 0 && (
-        <Card className="border-border/60" data-testid="location-totals-card">
-          <CardHeader>
-            <CardTitle className="font-heading flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-primary" />
-              Stock by Location
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {locationItems}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {speciesCards}
+          </div>
 
-      {data?.total_animals === 0 && (
-        <Card className="border-border/60">
-          <CardContent className="py-12 text-center">
-            <Cow className="h-16 w-16 mx-auto mb-4 text-muted-foreground/30" />
-            <p className="text-lg font-medium text-muted-foreground mb-2">No livestock data yet</p>
-            <p className="text-sm text-muted-foreground mb-4">Start by adding locations and opening balances</p>
-            <div className="flex gap-2 justify-center">
-              <Link to="/locations">
-                <Button variant="outline">Add Locations</Button>
-              </Link>
-              <Link to="/opening-balances">
-                <Button>Set Opening Balances</Button>
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
+          {catSections.length > 0 && (
+            <Card className="border-border/60" data-testid="category-breakdown-card">
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center gap-2">
+                  <Cow className="h-5 w-5 text-primary" />
+                  Summary by Category
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {catSections}
+              </CardContent>
+            </Card>
+          )}
+
+          {selectedLocation === 'all' && locationItems.length > 0 && (
+            <Card className="border-border/60" data-testid="location-totals-card">
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-primary" />
+                  Stock by Location
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {locationItems}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {data?.total_animals === 0 && (
+            <Card className="border-border/60">
+              <CardContent className="py-12 text-center">
+                <Cow className="h-16 w-16 mx-auto mb-4 text-muted-foreground/30" />
+                <p className="text-lg font-medium text-muted-foreground mb-2">No livestock data yet</p>
+                <p className="text-sm text-muted-foreground mb-4">Start by adding locations and opening balances</p>
+                <div className="flex gap-2 justify-center">
+                  <Link to="/locations">
+                    <Button variant="outline">Add Locations</Button>
+                  </Link>
+                  <Link to="/opening-balances">
+                    <Button>Set Opening Balances</Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );

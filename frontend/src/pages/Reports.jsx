@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getDailyReport, getRangeReport, getAnalyticsReport, getLocations } from '../lib/api';
+import { getDailyReport, getRangeReport, getAnalyticsReport, getDetailedReport, getLocations } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -67,6 +67,54 @@ function AnalyticsCard({ speciesRate }) {
           <div className="p-2 rounded-lg bg-purple-50 text-center">
             <span className="text-xs text-purple-700">Bought</span>
             <p className="font-bold text-purple-800">{speciesRate.bought}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BreedingAnalyticsCard({ speciesRate }) {
+  const config = SPECIES_CONFIG[speciesRate.species];
+  const trend = speciesRate.breeding_females_trend || 0;
+  const trendPositive = trend >= 0;
+
+  return (
+    <Card className="border-border/60 overflow-hidden">
+      <div className="h-2" style={{ backgroundColor: speciesRate.color }} />
+      <CardHeader className="pb-2">
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-3 rounded-full" style={{ backgroundColor: speciesRate.color }} />
+          <CardTitle className="font-heading text-base">{config?.label || speciesRate.species}</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="p-3 rounded-lg bg-emerald-50">
+            <div className="flex items-center justify-between text-xs text-emerald-700">
+              <span>Breeding Females (Koo)</span>
+              <span className={trendPositive ? 'text-emerald-600' : 'text-red-600'}>
+                {trendPositive ? <TrendUp className="h-3 w-3" /> : <TrendDown className="h-3 w-3" />}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <p className="text-2xl font-bold text-emerald-800">{speciesRate.breeding_females}</p>
+              <p className={`text-sm font-semibold ${trendPositive ? 'text-emerald-700' : 'text-red-700'}`}>
+                {trendPositive ? '+' : ''}{trend}
+              </p>
+            </div>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-50">
+            <p className="text-xs text-slate-600">Breeding Males (Dume Mbegu)</p>
+            <p className="text-2xl font-bold text-slate-800">{speciesRate.breeding_males}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-amber-50">
+            <p className="text-xs text-amber-700">Births</p>
+            <p className="text-2xl font-bold text-amber-800">{speciesRate.births}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-blue-50">
+            <p className="text-xs text-blue-700">Calving Rate</p>
+            <p className="text-2xl font-bold text-blue-800">{speciesRate.calving_rate}%</p>
           </div>
         </div>
       </CardContent>
@@ -303,12 +351,54 @@ function SalesBySpeciesCard({ sale }) {
   );
 }
 
+function AnalyticsCategorySection({ speciesData }) {
+  const config = SPECIES_CONFIG[speciesData.species];
+  const cats = (speciesData.categories || []).slice().sort(function(a, b) {
+    return (b.count || 0) - (a.count || 0);
+  });
+  if (cats.length === 0) return null;
+  const total = speciesData.total || 0;
+
+  const catItems = [];
+  for (let i = 0; i < cats.length; i++) {
+    const netChange = cats[i].net_change || 0;
+    const isPositive = netChange >= 0;
+    const percent = total > 0 ? ((cats[i].count / total) * 100).toFixed(1) : '0.0';
+    catItems.push(
+      <div key={cats[i].category_id} className="p-2 rounded bg-muted/50 text-center">
+        <p className="text-xs text-muted-foreground truncate">{cats[i].category_name_sw}</p>
+        <p className="text-base font-bold font-heading mt-1">{cats[i].count}</p>
+        <p className="text-[11px] text-muted-foreground">{percent}%</p>
+        <p className={`text-xs mt-1 ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+          {isPositive ? '+' : ''}{netChange}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="h-3 w-3 rounded-full" style={{ backgroundColor: config?.color }} />
+        <h4 className="font-semibold text-sm">{config?.label || speciesData.species}</h4>
+        <Badge variant="outline" className="ml-auto">{speciesData.total} total</Badge>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+        {catItems}
+      </div>
+    </div>
+  );
+}
+
 function Reports() {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [loadingDetailed, setLoadingDetailed] = useState(false);
   const [reportData, setReportData] = useState(null);
   const [rangeData, setRangeData] = useState(null);
   const [analyticsData, setAnalyticsData] = useState(null);
+  const [detailedData, setDetailedData] = useState(null);
 
   const [dailyDate, setDailyDate] = useState(new Date());
   const [startDate, setStartDate] = useState(subDays(new Date(), 30));
@@ -373,9 +463,30 @@ function Reports() {
     }
   }
 
-  function handleGenerateReport() {
-    loadRangeReport();
-    loadAnalytics();
+  async function loadDetailedReport() {
+    try {
+      const params = {
+        start_date: format(startDate, 'yyyy-MM-dd'),
+        end_date: format(endDate, 'yyyy-MM-dd')
+      };
+      if (locationId && locationId !== 'all') params.location_id = locationId;
+      const response = await getDetailedReport(params);
+      setDetailedData(response.data);
+    } catch (error) {
+      toast.error('Failed to load detailed report');
+    }
+  }
+
+  async function handleGenerateReport() {
+    setLoadingAnalytics(true);
+    await Promise.all([loadRangeReport(), loadAnalytics()]);
+    setLoadingAnalytics(false);
+  }
+
+  async function handleGenerateDetailedReport() {
+    setLoadingDetailed(true);
+    await loadDetailedReport();
+    setLoadingDetailed(false);
   }
 
   // Build elements using for loops
@@ -392,6 +503,11 @@ function Reports() {
   const analyticsCards = [];
   for (let i = 0; i < speciesRates.length; i++) {
     analyticsCards.push(<AnalyticsCard key={speciesRates[i].species} speciesRate={speciesRates[i]} />);
+  }
+
+  const breedingCards = [];
+  for (let i = 0; i < speciesRates.length; i++) {
+    breedingCards.push(<BreedingAnalyticsCard key={speciesRates[i].species} speciesRate={speciesRates[i]} />);
   }
 
   const netChanges = analyticsData?.net_changes || [];
@@ -421,6 +537,21 @@ function Reports() {
     deathCards.push(<DeathsBySpeciesCard key={deathsBySpecies[i].species} ds={deathsBySpecies[i]} />);
   }
 
+  const deathsByLocation = deathAnalysis?.by_location || [];
+  const deathLocationRows = [];
+  for (let i = 0; i < deathsByLocation.length; i++) {
+    const loc = deathsByLocation[i];
+    deathLocationRows.push(
+      <div key={loc.location_id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+        <div>
+          <p className="font-medium">{loc.location_name}</p>
+          <p className="text-xs text-muted-foreground">{loc.percentage}% of deaths</p>
+        </div>
+        <Badge variant="outline">{loc.total_deaths}</Badge>
+      </div>
+    );
+  }
+
   // Abortion analysis
   const abortionAnalysis = analyticsData?.abortion_analysis;
   const abortionsBySpecies = abortionAnalysis?.by_species || [];
@@ -436,6 +567,17 @@ function Reports() {
   for (let i = 0; i < salesBySpecies.length; i++) {
     salesCards.push(<SalesBySpeciesCard key={salesBySpecies[i].species} sale={salesBySpecies[i]} />);
   }
+
+  const analyticsCategoryTotals = analyticsData?.category_totals || [];
+  const categorySections = [];
+  for (let i = 0; i < analyticsCategoryTotals.length; i++) {
+    if (analyticsCategoryTotals[i].categories && analyticsCategoryTotals[i].categories.length > 0) {
+      categorySections.push(
+        <AnalyticsCategorySection key={analyticsCategoryTotals[i].species} speciesData={analyticsCategoryTotals[i]} />
+      );
+    }
+  }
+
 
   const stockLocations = reportData ? Object.entries(reportData.stock_by_location || {}) : [];
   const stockCards = [];
@@ -482,6 +624,108 @@ function Reports() {
     );
   }
 
+  const openingTotals = detailedData?.opening_totals || [];
+  const closingTotals = detailedData?.closing_totals || [];
+  const detailedEvents = detailedData?.events || [];
+
+  const openingCards = [];
+  for (let i = 0; i < openingTotals.length; i++) {
+    const loc = openingTotals[i];
+    openingCards.push(
+      <div key={`opening-${loc.location_id}`} className="p-4 rounded-lg border border-border bg-muted/30">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="font-heading font-semibold">{loc.location_name}</h4>
+          <span className="text-xl font-bold">{loc.total}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="p-2 rounded bg-white">
+            <p className="text-muted-foreground">Cattle</p>
+            <p className="font-bold" style={{ color: SPECIES_CONFIG.cattle?.color }}>{loc.cattle}</p>
+          </div>
+          <div className="p-2 rounded bg-white">
+            <p className="text-muted-foreground">Sheep</p>
+            <p className="font-bold" style={{ color: SPECIES_CONFIG.sheep?.color }}>{loc.sheep}</p>
+          </div>
+          <div className="p-2 rounded bg-white">
+            <p className="text-muted-foreground">Goat</p>
+            <p className="font-bold" style={{ color: SPECIES_CONFIG.goat?.color }}>{loc.goat}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const closingCards = [];
+  for (let i = 0; i < closingTotals.length; i++) {
+    const loc = closingTotals[i];
+    closingCards.push(
+      <div key={`closing-${loc.location_id}`} className="p-4 rounded-lg border border-border bg-muted/30">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="font-heading font-semibold">{loc.location_name}</h4>
+          <span className="text-xl font-bold">{loc.total}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="p-2 rounded bg-white">
+            <p className="text-muted-foreground">Cattle</p>
+            <p className="font-bold" style={{ color: SPECIES_CONFIG.cattle?.color }}>{loc.cattle}</p>
+          </div>
+          <div className="p-2 rounded bg-white">
+            <p className="text-muted-foreground">Sheep</p>
+            <p className="font-bold" style={{ color: SPECIES_CONFIG.sheep?.color }}>{loc.sheep}</p>
+          </div>
+          <div className="p-2 rounded bg-white">
+            <p className="text-muted-foreground">Goat</p>
+            <p className="font-bold" style={{ color: SPECIES_CONFIG.goat?.color }}>{loc.goat}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const detailedEventCards = [];
+  for (let i = 0; i < detailedEvents.length; i++) {
+    const ev = detailedEvents[i];
+    const eventConfig = EVENT_TYPES[ev.event_type];
+    const dateLabel = ev.log_date ? format(new Date(ev.log_date), 'MMM d, yyyy') : '';
+    let movementLine = '';
+    if (ev.from_location_name || ev.to_location_name) {
+      const fromLoc = ev.from_location_name || 'Unknown';
+      const toLoc = ev.to_location_name || 'Unknown';
+      movementLine = `From ${fromLoc} to ${toLoc}`;
+    } else if (ev.from_category_name_sw || ev.to_category_name_sw) {
+      const fromCat = ev.from_category_name_sw || 'Unknown';
+      const toCat = ev.to_category_name_sw || 'Unknown';
+      movementLine = `Category: ${fromCat} -> ${toCat}`;
+    }
+
+    detailedEventCards.push(
+      <div key={`event-${ev.id}`} className="p-4 rounded-lg border border-border bg-muted/30">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <Badge className={eventConfig?.color || ''}>{eventConfig?.label || ev.event_type}</Badge>
+              <span className="text-xs text-muted-foreground">{dateLabel}</span>
+            </div>
+            <p className="font-medium">{ev.location_name}</p>
+            <p className="text-xs text-muted-foreground">{SPECIES_CONFIG[ev.species]?.label || ev.species}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-bold">{ev.count}</p>
+            {ev.category_name_sw && (
+              <p className="text-xs text-muted-foreground">Category: {ev.category_name_sw}</p>
+            )}
+          </div>
+        </div>
+        {movementLine && (
+          <p className="text-xs text-muted-foreground mt-2">{movementLine}</p>
+        )}
+        {ev.notes && (
+          <p className="text-xs text-muted-foreground mt-1">Notes: {ev.notes}</p>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6" data-testid="reports-page">
       <div>
@@ -492,9 +736,11 @@ function Reports() {
       <Tabs defaultValue="analytics">
         <TabsList className="flex-wrap">
           <TabsTrigger value="analytics" data-testid="analytics-tab">Herd Analytics</TabsTrigger>
+          <TabsTrigger value="breeding" data-testid="breeding-tab">Breeding Analytics</TabsTrigger>
           <TabsTrigger value="deaths" data-testid="deaths-tab">Deaths</TabsTrigger>
           <TabsTrigger value="abortions" data-testid="abortions-tab">Abortions</TabsTrigger>
           <TabsTrigger value="sales" data-testid="sales-tab">Sales</TabsTrigger>
+          <TabsTrigger value="detailed" data-testid="detailed-tab">Detailed Report</TabsTrigger>
           <TabsTrigger value="daily" data-testid="daily-tab">Daily</TabsTrigger>
         </TabsList>
 
@@ -551,7 +797,9 @@ function Reports() {
             </CardContent>
           </Card>
 
-          {analyticsData ? (
+          {loadingAnalytics ? (
+            <Skeleton className="h-64" />
+          ) : analyticsData ? (
             <>
               {analyticsData.location_name && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -577,11 +825,101 @@ function Reports() {
                   </div>
                 </CardContent>
               </Card>
+
+
+              {categorySections.length > 0 && (
+                <Card className="border-border/60">
+                  <CardHeader>
+                    <CardTitle className="font-heading flex items-center gap-2">
+                      <Package className="h-5 w-5 text-primary" />
+                      Animal Group Breakdown
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {categorySections}
+                  </CardContent>
+                </Card>
+              )}
             </>
           ) : (
             <div className="text-center py-12 text-muted-foreground">
               <ChartBar className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>Click Generate Report to view analytics</p>
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="breeding" className="space-y-6 mt-6">
+          <Card className="border-border/60">
+            <CardContent className="p-4">
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Location</label>
+                  <Select value={locationId} onValueChange={setLocationId}>
+                    <SelectTrigger className="w-[180px]" data-testid="breeding-location-filter">
+                      <MapPin className="h-4 w-4 mr-2 text-muted-foreground" />
+                      <SelectValue placeholder="All Locations" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Locations</SelectItem>
+                      {locationOptions}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Start Date</label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="gap-2">
+                        <CalendarBlank className="h-4 w-4" />
+                        {format(startDate, 'MMM d, yyyy')}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar mode="single" selected={startDate} onSelect={function(d) { if (d) setStartDate(d); }} />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">End Date</label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="gap-2">
+                        <CalendarBlank className="h-4 w-4" />
+                        {format(endDate, 'MMM d, yyyy')}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar mode="single" selected={endDate} onSelect={function(d) { if (d) setEndDate(d); }} />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <Button onClick={handleGenerateReport} className="gap-2" data-testid="generate-breeding-btn">
+                  <MagnifyingGlass className="h-4 w-4" />
+                  Generate Report
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {loadingAnalytics ? (
+            <Skeleton className="h-64" />
+          ) : analyticsData ? (
+            <>
+              {analyticsData.location_name && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <MapPin className="h-4 w-4" />
+                  <span>Showing for: <strong className="text-foreground">{analyticsData.location_name}</strong></span>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {breedingCards}
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-12 text-muted-foreground">
+              <ChartBar className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>Click Generate Report to view breeding analytics</p>
             </div>
           )}
         </TabsContent>
@@ -639,7 +977,9 @@ function Reports() {
             </CardContent>
           </Card>
 
-          {deathAnalysis ? (
+          {loadingAnalytics ? (
+            <Skeleton className="h-64" />
+          ) : deathAnalysis ? (
             <>
               <div className="grid grid-cols-3 gap-4">
                 <Card className="border-border/60">
@@ -698,6 +1038,24 @@ function Reports() {
                   ) : (
                     <div className="text-center py-8 text-muted-foreground">
                       <p>No deaths recorded in this period</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/60">
+                <CardHeader>
+                  <CardTitle className="font-heading flex items-center gap-2">
+                    <MapPin className="h-5 w-5 text-primary" />
+                    Deaths by Farm
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {deathLocationRows.length > 0 ? (
+                    <div className="space-y-3">{deathLocationRows}</div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <p>No farm-level death data for this period</p>
                     </div>
                   )}
                 </CardContent>
@@ -773,7 +1131,9 @@ function Reports() {
             </CardContent>
           </Card>
 
-          {abortionAnalysis ? (
+          {loadingAnalytics ? (
+            <Skeleton className="h-64" />
+          ) : abortionAnalysis ? (
             <>
               <div className="grid grid-cols-4 gap-4">
                 <Card className="border-border/60">
@@ -873,7 +1233,9 @@ function Reports() {
             </CardContent>
           </Card>
 
-          {salesAnalysis ? (
+          {loadingAnalytics ? (
+            <Skeleton className="h-64" />
+          ) : salesAnalysis ? (
             <>
               <div className="grid grid-cols-4 gap-4">
                 <Card className="border-border/60">
@@ -959,6 +1321,128 @@ function Reports() {
             <div className="text-center py-12 text-muted-foreground">
               <ShoppingCart className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>Click Generate Report to view sales analysis</p>
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="detailed" className="space-y-6 mt-6">
+          <Card className="border-border/60">
+            <CardContent className="p-4">
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Location</label>
+                  <Select value={locationId} onValueChange={setLocationId}>
+                    <SelectTrigger className="w-[180px]" data-testid="detailed-location-filter">
+                      <MapPin className="h-4 w-4 mr-2 text-muted-foreground" />
+                      <SelectValue placeholder="All Locations" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Locations</SelectItem>
+                      {locationOptions}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Start Date</label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="gap-2">
+                        <CalendarBlank className="h-4 w-4" />
+                        {format(startDate, 'MMM d, yyyy')}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar mode="single" selected={startDate} onSelect={function(d) { if (d) setStartDate(d); }} />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">End Date</label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="gap-2">
+                        <CalendarBlank className="h-4 w-4" />
+                        {format(endDate, 'MMM d, yyyy')}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar mode="single" selected={endDate} onSelect={function(d) { if (d) setEndDate(d); }} />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <Button onClick={handleGenerateDetailedReport} className="gap-2" data-testid="generate-detailed-btn">
+                  <MagnifyingGlass className="h-4 w-4" />
+                  Generate Report
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {loadingDetailed ? (
+            <Skeleton className="h-64" />
+          ) : detailedData ? (
+            <>
+              {detailedData.location_name && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <MapPin className="h-4 w-4" />
+                  <span>Showing for: <strong className="text-foreground">{detailedData.location_name}</strong></span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card className="border-border/60">
+                  <CardHeader>
+                    <CardTitle className="font-heading">Opening Balances</CardTitle>
+                    <CardDescription>{format(startDate, 'PPP')}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {openingCards.length > 0 ? (
+                      <div className="space-y-3">{openingCards}</div>
+                    ) : (
+                      <div className="text-center py-6 text-muted-foreground">
+                        <p>No opening balances for this period</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="border-border/60">
+                  <CardHeader>
+                    <CardTitle className="font-heading">Closing Balances</CardTitle>
+                    <CardDescription>{format(endDate, 'PPP')}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {closingCards.length > 0 ? (
+                      <div className="space-y-3">{closingCards}</div>
+                    ) : (
+                      <div className="text-center py-6 text-muted-foreground">
+                        <p>No closing balances for this period</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card className="border-border/60">
+                <CardHeader>
+                  <CardTitle className="font-heading">Events in Range</CardTitle>
+                  <CardDescription>{format(startDate, 'PPP')} - {format(endDate, 'PPP')}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {detailedEventCards.length > 0 ? (
+                    <div className="space-y-3">{detailedEventCards}</div>
+                  ) : (
+                    <div className="text-center py-6 text-muted-foreground">
+                      <p>No events recorded in this period</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <div className="text-center py-12 text-muted-foreground">
+              <ChartBar className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>Click Generate Report to view detailed report</p>
             </div>
           )}
         </TabsContent>

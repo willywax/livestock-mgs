@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -25,9 +25,9 @@ from schemas import (
     OpeningBalanceCreate, OpeningBalanceUpdate, OpeningBalanceResponse,
     DailyLogCreate, DailyLogResponse, EventCreate, EventResponse,
     StockLevelResponse, DashboardResponse, SpeciesTotals, LocationTotals, EventSummary,
-    DateRangeReport, EventUpdate, SpeciesCategoryTotals, CategoryTotal,
+    DateRangeReport, DetailedReportResponse, DetailedReportEvent, EventUpdate, SpeciesCategoryTotals, CategoryTotal,
     AnalyticsResponse, SpeciesRates, HerdPerformance, NetChange,
-    DeathAnalysis, DeathBySpecies, DeathByCategory, DeathByCause, DeathByDisease,
+    DeathAnalysis, DeathBySpecies, DeathByCategory, DeathByCause, DeathByDisease, DeathByLocation,
     DiseaseCreate, DiseaseResponse,
     AbortionAnalysis, AbortionBySpecies, AbortionByStage,
     SalesAnalysis, SalesBySpecies, SalesByBuyer
@@ -1167,10 +1167,11 @@ async def recompute_stock_levels_endpoint(
 @api_router.get("/dashboard", response_model=DashboardResponse)
 async def get_dashboard(
     location_id: Optional[int] = None,
+    period_days: int = Query(30, ge=1, le=3650),
     db: AsyncSession = Depends(get_db)
 ):
     today = date.today()
-    thirty_days_ago = today - timedelta(days=30)
+    period_start = today - timedelta(days=period_days)
     
     # Get location info if filtered
     selected_location = None
@@ -1240,6 +1241,9 @@ async def get_dashboard(
             goat=goat_total,
             total=cattle_total + sheep_total + goat_total
         ))
+
+    location_totals = [lt for lt in location_totals if lt.total > 0]
+    location_totals.sort(key=lambda lt: lt.total, reverse=True)
     
     # Get today's events
     events_query = select(DailyLog).options(selectinload(DailyLog.events)).where(DailyLog.log_date == today)
@@ -1304,11 +1308,11 @@ async def get_dashboard(
             total=species_total
         ))
     
-    # Calculate herd performance indicators (last 30 days)
+    # Calculate herd performance indicators (selected period)
     herd_performance = []
     
-    # Get events from last 30 days
-    perf_query = select(Event).join(DailyLog).where(DailyLog.log_date >= thirty_days_ago)
+    # Get events from selected period
+    perf_query = select(Event).join(DailyLog).where(DailyLog.log_date >= period_start)
     if location_id:
         perf_query = perf_query.where(DailyLog.location_id == location_id)
     result = await db.execute(perf_query)
@@ -1339,25 +1343,25 @@ async def get_dashboard(
             breeding_females = result.scalar() or 0
         
         # Count events for this species
-        births_30d = sum(e.count for e in recent_events if e.species == sp and e.event_type == EventType.BIRTH)
-        deaths_30d = sum(e.count for e in recent_events if e.species == sp and e.event_type == EventType.DEATH)
+        births_period = sum(e.count for e in recent_events if e.species == sp and e.event_type == EventType.BIRTH)
+        deaths_period = sum(e.count for e in recent_events if e.species == sp and e.event_type == EventType.DEATH)
         
         # Calculate rates
-        mortality_rate = (deaths_30d / total_stock * 100) if total_stock > 0 else 0
-        calving_rate = (births_30d / breeding_females * 100) if breeding_females > 0 else 0
+        mortality_rate = (deaths_period / total_stock * 100) if total_stock > 0 else 0
+        calving_rate = (births_period / breeding_females * 100) if breeding_females > 0 else 0
         
         herd_performance.append(HerdPerformance(
             species=sp,
             total_stock=total_stock,
             breeding_females=breeding_females,
-            births_30d=births_30d,
-            deaths_30d=deaths_30d,
+            births_30d=births_period,
+            deaths_30d=deaths_period,
             calving_rate=round(calving_rate, 1),
             mortality_rate=round(mortality_rate, 1),
             color=species_colors.get(sp, "#666666")
         ))
     
-    # Calculate net changes (last 30 days)
+    # Calculate net changes (selected period)
     net_changes = []
     for sp in SpeciesType:
         births = sum(e.count for e in recent_events if e.species == sp and e.event_type == EventType.BIRTH)
@@ -1411,6 +1415,97 @@ async def get_dashboard(
     )
 
 # ==================== REPORTS ROUTES ====================
+async def build_stock_snapshot(
+    db: AsyncSession,
+    as_of_date: date,
+    location_id: Optional[int] = None
+) -> dict:
+    openings_query = select(OpeningBalance).where(OpeningBalance.period_start <= as_of_date)
+    if location_id:
+        openings_query = openings_query.where(OpeningBalance.location_id == location_id)
+    openings_query = openings_query.order_by(OpeningBalance.period_start.desc())
+    result = await db.execute(openings_query)
+    openings = result.scalars().all()
+
+    latest_openings = {}
+    for opening in openings:
+        key = (opening.location_id, opening.species, opening.category_id)
+        if key not in latest_openings:
+            latest_openings[key] = {"count": opening.count, "start": opening.period_start}
+
+    current = dict(latest_openings)
+
+    events_query = (
+        select(Event, DailyLog.log_date, DailyLog.location_id)
+        .join(DailyLog)
+        .where(DailyLog.log_date <= as_of_date)
+        .order_by(DailyLog.log_date.asc(), Event.id.asc())
+    )
+    if location_id:
+        events_query = events_query.where(
+            or_(
+                DailyLog.location_id == location_id,
+                Event.from_location_id == location_id,
+                Event.to_location_id == location_id
+            )
+        )
+    result = await db.execute(events_query)
+    events = result.all()
+
+    for event, log_date, log_location_id in events:
+        for adj_location_id, adj_species, adj_category_id, delta in event_stock_adjustments(event, log_location_id):
+            if location_id and adj_location_id != location_id:
+                continue
+            key = (adj_location_id, adj_species, adj_category_id)
+            if key not in current:
+                current[key] = {"count": 0, "start": date.min}
+            if log_date < current[key]["start"]:
+                continue
+            current[key]["count"] += delta
+
+    return current
+
+async def build_location_totals_from_snapshot(
+    db: AsyncSession,
+    snapshot: dict,
+    location_id: Optional[int] = None,
+    include_zero: bool = False
+) -> List[LocationTotals]:
+    totals = {}
+    for (loc_id, species, _category_id), data in snapshot.items():
+        if location_id and loc_id != location_id:
+            continue
+        if loc_id not in totals:
+            totals[loc_id] = {"cattle": 0, "sheep": 0, "goat": 0, "total": 0}
+        species_key = species.value
+        totals[loc_id][species_key] += data["count"]
+        totals[loc_id]["total"] += data["count"]
+
+    if location_id and location_id not in totals:
+        totals[location_id] = {"cattle": 0, "sheep": 0, "goat": 0, "total": 0}
+
+    location_ids = list(totals.keys())
+    location_names = {}
+    if location_ids:
+        result = await db.execute(select(Location).where(Location.id.in_(location_ids)))
+        location_names = {loc.id: loc.name for loc in result.scalars().all()}
+
+    results = []
+    for loc_id, counts in totals.items():
+        if not include_zero and counts["total"] <= 0:
+            continue
+        results.append(LocationTotals(
+            location_id=loc_id,
+            location_name=location_names.get(loc_id, "Unknown"),
+            cattle=counts["cattle"],
+            sheep=counts["sheep"],
+            goat=counts["goat"],
+            total=counts["total"]
+        ))
+
+    results.sort(key=lambda lt: lt.total, reverse=True)
+    return results
+
 @api_router.get("/reports/daily")
 async def get_daily_report(
     report_date: date = None,
@@ -1482,7 +1577,13 @@ async def get_range_report(
     if event_type:
         query = query.where(Event.event_type == event_type)
     if location_id:
-        query = query.where(DailyLog.location_id == location_id)
+        query = query.where(
+            or_(
+                DailyLog.location_id == location_id,
+                Event.from_location_id == location_id,
+                Event.to_location_id == location_id
+            )
+        )
     
     result = await db.execute(query)
     events = result.scalars().all()
@@ -1539,14 +1640,46 @@ async def get_analytics_report(
     # Get all events in date range with category info
     events_query = (
         select(Event)
-        .options(selectinload(Event.category), selectinload(Event.disease))
+        .options(selectinload(Event.category), selectinload(Event.disease), selectinload(Event.daily_log))
         .join(DailyLog)
         .where(and_(DailyLog.log_date >= start_date, DailyLog.log_date <= end_date))
     )
     if location_id:
-        events_query = events_query.where(DailyLog.location_id == location_id)
+        events_query = events_query.where(
+            or_(
+                DailyLog.location_id == location_id,
+                Event.from_location_id == location_id,
+                Event.to_location_id == location_id
+            )
+        )
     result = await db.execute(events_query)
     events = result.scalars().all()
+
+    category_result = await db.execute(
+        select(Category).where(Category.name_sw.in_(["Koo", "Dume Mbegu"]))
+    )
+    categories = category_result.scalars().all()
+    category_ids = {(cat.species, cat.name_sw): cat.id for cat in categories}
+
+    def category_net_change(species: SpeciesType, category_id: Optional[int]) -> int:
+        if not category_id:
+            return 0
+        change = 0
+        for event in events:
+            if event.species != species or not event.is_stock_event:
+                continue
+            if event.event_type in [EventType.BIRTH, EventType.GIFT_IN, EventType.BOUGHT]:
+                if event.category_id == category_id:
+                    change += event.count
+            elif event.event_type in [EventType.DEATH, EventType.SOLD, EventType.MISSING, EventType.GIFT_OUT]:
+                if event.category_id == category_id:
+                    change -= event.count
+            elif event.event_type in [EventType.CATEGORY_CHANGE, EventType.WEANING]:
+                if event.from_category_id == category_id:
+                    change -= event.count
+                if event.to_category_id == category_id:
+                    change += event.count
+        return change
     
     # Get current stock levels for each species
     species_data = {}
@@ -1570,20 +1703,31 @@ async def get_analytics_report(
         gift_out = sum(e.count for e in events if e.species == sp and e.event_type == EventType.GIFT_OUT)
         missing = sum(e.count for e in events if e.species == sp and e.event_type == EventType.MISSING)
         
+        breeding_female_category_id = category_ids.get((sp, "Koo"))
+        breeding_male_category_id = category_ids.get((sp, "Dume Mbegu"))
+
         # Get breeding female count (Koo category) for calving rate
         breeding_females = 0
-        result = await db.execute(
-            select(Category).where(and_(Category.species == sp, Category.name_sw == "Koo"))
-        )
-        bf_category = result.scalar_one_or_none()
-        if bf_category:
+        if breeding_female_category_id:
             bf_query = select(func.coalesce(func.sum(StockLevel.current_count), 0)).where(
-                and_(StockLevel.species == sp, StockLevel.category_id == bf_category.id)
+                and_(StockLevel.species == sp, StockLevel.category_id == breeding_female_category_id)
             )
             if location_id:
                 bf_query = bf_query.where(StockLevel.location_id == location_id)
             result = await db.execute(bf_query)
             breeding_females = result.scalar() or 0
+
+        breeding_males = 0
+        if breeding_male_category_id:
+            bm_query = select(func.coalesce(func.sum(StockLevel.current_count), 0)).where(
+                and_(StockLevel.species == sp, StockLevel.category_id == breeding_male_category_id)
+            )
+            if location_id:
+                bm_query = bm_query.where(StockLevel.location_id == location_id)
+            result = await db.execute(bm_query)
+            breeding_males = result.scalar() or 0
+
+        breeding_females_trend = category_net_change(sp, breeding_female_category_id)
         
         # Calculate rates
         mortality_rate = (deaths / total_stock * 100) if total_stock > 0 else 0
@@ -1594,6 +1738,8 @@ async def get_analytics_report(
             species=sp,
             total_stock=total_stock,
             breeding_females=breeding_females,
+            breeding_males=breeding_males,
+            breeding_females_trend=breeding_females_trend,
             births=births,
             deaths=deaths,
             weaned=weaned,
@@ -1619,10 +1765,67 @@ async def get_analytics_report(
             weaned=weaned,
             net_change=net_change
         ))
+
+    # Category breakdown for animal groups
+    category_totals = []
+    for sp in SpeciesType:
+        category_net_changes = {}
+        for event in events:
+            if event.species != sp or not event.is_stock_event:
+                continue
+            if event.event_type in [EventType.BIRTH, EventType.GIFT_IN, EventType.BOUGHT]:
+                if event.category_id:
+                    category_net_changes[event.category_id] = category_net_changes.get(event.category_id, 0) + event.count
+            elif event.event_type in [EventType.DEATH, EventType.SOLD, EventType.MISSING, EventType.GIFT_OUT]:
+                if event.category_id:
+                    category_net_changes[event.category_id] = category_net_changes.get(event.category_id, 0) - event.count
+            elif event.event_type in [EventType.CATEGORY_CHANGE, EventType.WEANING]:
+                if event.from_category_id:
+                    category_net_changes[event.from_category_id] = category_net_changes.get(event.from_category_id, 0) - event.count
+                if event.to_category_id:
+                    category_net_changes[event.to_category_id] = category_net_changes.get(event.to_category_id, 0) + event.count
+
+        cat_query = select(StockLevel).options(selectinload(StockLevel.category)).where(StockLevel.species == sp)
+        if location_id:
+            cat_query = cat_query.where(StockLevel.location_id == location_id)
+        result = await db.execute(cat_query)
+        stock_levels = result.scalars().all()
+
+        category_counts = {}
+        for sl in stock_levels:
+            if sl.category_id not in category_counts:
+                category_counts[sl.category_id] = {
+                    "name_sw": sl.category.name_sw if sl.category else "Unknown",
+                    "count": 0
+                }
+            category_counts[sl.category_id]["count"] += sl.current_count
+
+        categories_list = [
+            CategoryTotal(
+                category_id=cat_id,
+                category_name_sw=data["name_sw"],
+                count=data["count"],
+                net_change=category_net_changes.get(cat_id, 0)
+            )
+            for cat_id, data in category_counts.items()
+            if data["count"] > 0
+        ]
+
+        species_total = sum(c.count for c in categories_list)
+        category_totals.append(SpeciesCategoryTotals(
+            species=sp,
+            categories=categories_list,
+            total=species_total
+        ))
     
     # ===== DETAILED DEATH ANALYSIS =====
     death_events = [e for e in events if e.event_type == EventType.DEATH]
     total_deaths = sum(e.count for e in death_events)
+
+    location_lookup = {}
+    location_result = await db.execute(select(Location))
+    for loc in location_result.scalars().all():
+        location_lookup[loc.id] = loc.name
     
     # Aggregate death causes
     death_causes_dict = {}
@@ -1744,9 +1947,34 @@ async def get_analytics_report(
         ))
     
     vet_attendance_rate = (total_with_vet / total_deaths * 100) if total_deaths > 0 else 0
+
+    death_locations = {}
+    for event in death_events:
+        log = event.daily_log
+        if not log:
+            continue
+        loc_id = log.location_id
+        if not loc_id:
+            continue
+        if loc_id not in death_locations:
+            death_locations[loc_id] = {
+                "name": location_lookup.get(loc_id, "Unknown"),
+                "count": 0
+            }
+        death_locations[loc_id]["count"] += event.count
+
+    deaths_by_location = []
+    for loc_id, data in sorted(death_locations.items(), key=lambda x: x[1]["count"], reverse=True):
+        deaths_by_location.append(DeathByLocation(
+            location_id=loc_id,
+            location_name=data["name"],
+            total_deaths=data["count"],
+            percentage=round((data["count"] / total_deaths * 100) if total_deaths > 0 else 0, 1)
+        ))
     death_analysis = DeathAnalysis(
         total_deaths=total_deaths, by_species=deaths_by_species, top_causes=top_causes,
-        top_diseases=top_diseases, vet_attendance_rate=round(vet_attendance_rate, 1)
+        top_diseases=top_diseases, vet_attendance_rate=round(vet_attendance_rate, 1),
+        by_location=deaths_by_location
     )
     
     # ===== ABORTION ANALYSIS =====
@@ -1888,9 +2116,89 @@ async def get_analytics_report(
     
     return AnalyticsResponse(
         period_start=start_date, period_end=end_date,
-        species_rates=list(species_data.values()), death_analysis=death_analysis,
+        species_rates=list(species_data.values()), category_totals=category_totals, death_analysis=death_analysis,
         abortion_analysis=abortion_analysis, sales_analysis=sales_analysis,
         net_changes=net_changes_list, location_id=location_id, location_name=location_name
+    )
+
+@api_router.get("/reports/detailed", response_model=DetailedReportResponse)
+async def get_detailed_report(
+    start_date: date,
+    end_date: date,
+    location_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+
+    selected_location_name = None
+    if location_id:
+        loc_result = await db.execute(select(Location).where(Location.id == location_id))
+        loc = loc_result.scalar_one_or_none()
+        if loc:
+            selected_location_name = loc.name
+
+    opening_date = start_date - timedelta(days=1)
+    opening_snapshot = await build_stock_snapshot(db, opening_date, location_id=location_id)
+    closing_snapshot = await build_stock_snapshot(db, end_date, location_id=location_id)
+
+    include_zero = bool(location_id)
+    opening_totals = await build_location_totals_from_snapshot(
+        db, opening_snapshot, location_id=location_id, include_zero=include_zero
+    )
+    closing_totals = await build_location_totals_from_snapshot(
+        db, closing_snapshot, location_id=location_id, include_zero=include_zero
+    )
+
+    events_query = (
+        select(Event, DailyLog.log_date, DailyLog.location_id)
+        .join(DailyLog)
+        .options(
+            selectinload(Event.daily_log).selectinload(DailyLog.location),
+            selectinload(Event.category),
+            selectinload(Event.from_location),
+            selectinload(Event.to_location),
+            selectinload(Event.from_category),
+            selectinload(Event.to_category)
+        )
+        .where(and_(DailyLog.log_date >= start_date, DailyLog.log_date <= end_date))
+        .order_by(DailyLog.log_date.asc(), Event.id.asc())
+    )
+    if location_id:
+        events_query = events_query.where(DailyLog.location_id == location_id)
+    result = await db.execute(events_query)
+    event_rows = result.all()
+
+    events = []
+    for event, log_date, log_location_id in event_rows:
+        log_location_name = "Unknown"
+        if event.daily_log and event.daily_log.location:
+            log_location_name = event.daily_log.location.name
+
+        events.append(DetailedReportEvent(
+            id=event.id,
+            log_date=log_date,
+            location_id=log_location_id,
+            location_name=log_location_name,
+            event_type=event.event_type,
+            species=event.species,
+            count=event.count,
+            category_name_sw=event.category.name_sw if event.category else None,
+            from_location_name=event.from_location.name if event.from_location else None,
+            to_location_name=event.to_location.name if event.to_location else None,
+            from_category_name_sw=event.from_category.name_sw if event.from_category else None,
+            to_category_name_sw=event.to_category.name_sw if event.to_category else None,
+            notes=event.notes
+        ))
+
+    return DetailedReportResponse(
+        start_date=start_date,
+        end_date=end_date,
+        location_id=location_id,
+        location_name=selected_location_name,
+        opening_totals=opening_totals,
+        closing_totals=closing_totals,
+        events=events
     )
 
 # ==================== HELPER FUNCTIONS ====================

@@ -225,6 +225,7 @@ class CategoryTotal(BaseModel):
     category_id: int
     category_name_sw: str
     count: int
+    net_change: Optional[int] = None
 
 class SpeciesCategoryTotals(BaseModel):
     species: SpeciesType
@@ -287,10 +288,36 @@ class DateRangeReport(BaseModel):
     net_movements: dict
     location_summaries: List[dict]
 
+class DetailedReportEvent(BaseModel):
+    id: int
+    log_date: date
+    location_id: int
+    location_name: str
+    event_type: EventType
+    species: SpeciesType
+    count: int
+    category_name_sw: Optional[str] = None
+    from_location_name: Optional[str] = None
+    to_location_name: Optional[str] = None
+    from_category_name_sw: Optional[str] = None
+    to_category_name_sw: Optional[str] = None
+    notes: Optional[str] = None
+
+class DetailedReportResponse(BaseModel):
+    start_date: date
+    end_date: date
+    location_id: Optional[int] = None
+    location_name: Optional[str] = None
+    opening_totals: List[LocationTotals]
+    closing_totals: List[LocationTotals]
+    events: List[DetailedReportEvent]
+
 class SpeciesRates(BaseModel):
     species: SpeciesType
     total_stock: int
     breeding_females: int
+    breeding_males: int
+    breeding_females_trend: int
     births: int
     deaths: int
     weaned: int
@@ -320,6 +347,12 @@ class DeathByDisease(BaseModel):
     percentage: float
     avg_days_sick: Optional[float] = None
 
+class DeathByLocation(BaseModel):
+    location_id: int
+    location_name: str
+    total_deaths: int
+    percentage: float
+
 class DeathBySpecies(BaseModel):
     species: SpeciesType
     total_deaths: int
@@ -333,6 +366,7 @@ class DeathBySpecies(BaseModel):
 class DeathAnalysis(BaseModel):
     total_deaths: int
     by_species: List[DeathBySpecies]
+    by_location: List[DeathByLocation]
     top_causes: List[DeathByCause]
     top_diseases: List[DeathByDisease]  # Top diseases across all species
     vet_attendance_rate: float
@@ -381,6 +415,7 @@ class AnalyticsResponse(BaseModel):
     period_start: date
     period_end: date
     species_rates: List[SpeciesRates]
+    category_totals: List[SpeciesCategoryTotals]
     death_analysis: DeathAnalysis
     abortion_analysis: AbortionAnalysis
     sales_analysis: SalesAnalysis

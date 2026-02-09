@@ -101,5 +101,6 @@ export const getDashboard = (params) => api.get('/dashboard', { params });
 export const getDailyReport = (date) => api.get('/reports/daily', { params: { report_date: date } });
 export const getRangeReport = (params) => api.get('/reports/range', { params });
 export const getAnalyticsReport = (params) => api.get('/reports/analytics', { params });
+export const getDetailedReport = (params) => api.get('/reports/detailed', { params });
 
 export default api;
