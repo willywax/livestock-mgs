@@ -23,7 +23,7 @@ gcloud run deploy shamba-backend \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars DATABASE_URL="YOUR_NEON_URL",CORS_ORIGINS="YOUR_FRONTEND_URL",JWT_SECRET="YOUR_JWT_SECRET"
+  --set-env-vars DATABASE_URL="YOUR_NEON_URL",CORS_ORIGINS="https://stocks.serengeti-ranching.com",JWT_SECRET="YOUR_JWT_SECRET"
 ```
 
 ## 3) Build & deploy frontend
@@ -34,7 +34,7 @@ cd frontend
 
 gcloud builds submit \
   --tag gcr.io/elitagroup/srcstock \
-  --build-arg REACT_APP_BACKEND_URL=YOUR_BACKEND_URL
+  --build-arg REACT_APP_BACKEND_URL=https://stocks-api.serengeti-ranching.com
 
 gcloud run deploy srcstock \
   --image gcr.io/elitagroup/srcstock \
@@ -45,5 +45,6 @@ gcloud run deploy srcstock \
 
 ## 4) Notes
 - Set `CORS_ORIGINS` to the full frontend URL (comma-separated for multiple).
+- Live domains: frontend https://stocks.serengeti-ranching.com, backend https://stocks-api.serengeti-ranching.com.
 - For Neon, use the standard postgres URL you provided. The backend normalizes it for asyncpg.
 - If you need a separate staging/prod, deploy two services with different names and env vars.
