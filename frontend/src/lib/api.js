@@ -85,9 +85,11 @@ export const updateOpeningBalance = (id, data) => api.put(`/opening-balances/${i
 export const getDailyLogs = (params) => api.get('/daily-logs', { params });
 export const getDailyLog = (id) => api.get(`/daily-logs/${id}`);
 export const createDailyLog = (data) => api.post('/daily-logs', data);
+export const updateDailyLog = (id, data) => api.put(`/daily-logs/${id}`, data);
 export const lockDailyLog = (id) => api.post(`/daily-logs/${id}/lock`);
 
 // Events (Admin only)
+export const createEvent = (logId, data) => api.post(`/daily-logs/${logId}/events`, data);
 export const updateEvent = (id, data) => api.put(`/events/${id}`, data);
 export const deleteEvent = (id) => api.delete(`/events/${id}`);
 

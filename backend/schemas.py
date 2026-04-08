@@ -191,6 +191,11 @@ class DailyLogCreate(BaseModel):
     notes: Optional[str] = None
     events: List[EventCreate] = []
 
+class DailyLogUpdate(BaseModel):
+    location_id: Optional[int] = None
+    log_date: Optional[date] = None
+    notes: Optional[str] = None
+
 class DailyLogResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

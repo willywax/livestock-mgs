@@ -23,7 +23,7 @@ from schemas import (
     LocationCreate, LocationUpdate, LocationResponse,
     CategoryResponse,
     OpeningBalanceCreate, OpeningBalanceUpdate, OpeningBalanceResponse,
-    DailyLogCreate, DailyLogResponse, EventCreate, EventResponse,
+    DailyLogCreate, DailyLogUpdate, DailyLogResponse, EventCreate, EventResponse,
     StockLevelResponse, DashboardResponse, SpeciesTotals, LocationTotals, EventSummary,
     DateRangeReport, DetailedReportResponse, DetailedReportEvent, EventUpdate, SpeciesCategoryTotals, CategoryTotal,
     AnalyticsResponse, SpeciesRates, HerdPerformance, NetChange,
@@ -48,11 +48,32 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def parse_cors_origins(raw_origins: Optional[str]) -> List[str]:
+    if not raw_origins:
+        return [
+            "https://stocks.serengeti-ranching.com",
+            "https://serengeti-ranching.com",
+        ]
+
+    origins = [
+        origin.strip().strip('"').strip("'")
+        for origin in raw_origins.split(',')
+        if origin.strip().strip('"').strip("'")
+    ]
+
+    return origins or [
+        "https://stocks.serengeti-ranching.com",
+        "https://serengeti-ranching.com",
+    ]
+
 # CORS
+allowed_origins = parse_cors_origins(os.environ.get('CORS_ORIGINS'))
+logger.info("CORS allowed origins: %s", allowed_origins)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -932,6 +953,94 @@ async def create_daily_log(
         events=[]
     )
 
+@api_router.post("/daily-logs/{log_id}/events", response_model=EventResponse)
+async def add_event_to_daily_log(
+    log_id: int,
+    event_data: EventCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN))
+):
+    """Add a new event to an existing daily log - Admin only."""
+    result = await db.execute(
+        select(DailyLog).where(DailyLog.id == log_id)
+    )
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="Daily log not found")
+
+    # Validate stock availability for stock-reducing events
+    if event_data.is_stock_event and event_data.event_type not in [EventType.BIRTH, EventType.GIFT_IN, EventType.BOUGHT]:
+        can_proceed, message = await check_stock_availability(
+            db, log.location_id, event_data, True  # Admin bypasses strict checks
+        )
+        if not can_proceed:
+            raise HTTPException(status_code=400, detail=message)
+
+    event = Event(
+        daily_log_id=log.id,
+        event_type=event_data.event_type,
+        species=event_data.species,
+        category_id=event_data.category_id,
+        count=event_data.count,
+        from_location_id=event_data.from_location_id,
+        to_location_id=event_data.to_location_id,
+        from_category_id=event_data.from_category_id,
+        to_category_id=event_data.to_category_id,
+        notes=event_data.notes,
+        is_stock_event=event_data.is_stock_event,
+        animal_tags=event_data.animal_tags,
+        cause_of_death=event_data.cause_of_death,
+        disease_id=event_data.disease_id,
+        days_sick=event_data.days_sick,
+        attending_vet=event_data.attending_vet,
+        abortion_stage=event_data.abortion_stage,
+        mother_tag=event_data.mother_tag,
+        offspring_tags=event_data.offspring_tags,
+        buyer_name=event_data.buyer_name,
+        buyer_phone=event_data.buyer_phone,
+        buyer_address=event_data.buyer_address,
+        sale_price=event_data.sale_price,
+        created_by=current_user.id
+    )
+    db.add(event)
+
+    # Update stock levels
+    if event_data.is_stock_event:
+        await apply_event_to_stock(db, log.location_id, event_data)
+
+    # Mark log as having events
+    log.has_events = True
+
+    await db.commit()
+    await db.refresh(event)
+
+    return EventResponse(
+        id=event.id,
+        event_type=event.event_type,
+        species=event.species,
+        category_id=event.category_id,
+        count=event.count,
+        from_location_id=event.from_location_id,
+        to_location_id=event.to_location_id,
+        from_category_id=event.from_category_id,
+        to_category_id=event.to_category_id,
+        notes=event.notes,
+        is_stock_event=event.is_stock_event,
+        created_at=event.created_at,
+        animal_tags=event.animal_tags,
+        cause_of_death=event.cause_of_death,
+        disease_id=event.disease_id,
+        days_sick=event.days_sick,
+        attending_vet=event.attending_vet,
+        abortion_stage=event.abortion_stage,
+        mother_tag=event.mother_tag,
+        offspring_tags=event.offspring_tags,
+        buyer_name=event.buyer_name,
+        buyer_phone=event.buyer_phone,
+        buyer_address=event.buyer_address,
+        sale_price=event.sale_price,
+    )
+
 @api_router.post("/daily-logs/{log_id}/lock")
 async def lock_daily_log(
     log_id: int,
@@ -949,6 +1058,74 @@ async def lock_daily_log(
     
     await db.commit()
     return {"message": "Daily log locked"}
+
+@api_router.put("/daily-logs/{log_id}", response_model=DailyLogResponse)
+async def update_daily_log(
+    log_id: int,
+    data: DailyLogUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN))
+):
+    """Update a daily log's location, date, or notes - Admin only."""
+    result = await db.execute(
+        select(DailyLog)
+        .options(selectinload(DailyLog.location), selectinload(DailyLog.events))
+        .where(DailyLog.id == log_id)
+    )
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="Daily log not found")
+
+    # If changing location or date, check for conflicts
+    new_location_id = data.location_id if data.location_id is not None else log.location_id
+    new_log_date = data.log_date if data.log_date is not None else log.log_date
+
+    if data.location_id is not None or data.log_date is not None:
+        conflict_result = await db.execute(
+            select(DailyLog).where(
+                and_(
+                    DailyLog.location_id == new_location_id,
+                    DailyLog.log_date == new_log_date,
+                    DailyLog.id != log_id
+                )
+            )
+        )
+        if conflict_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="A daily log already exists for this date and location"
+            )
+
+    if data.location_id is not None:
+        log.location_id = data.location_id
+    if data.log_date is not None:
+        log.log_date = data.log_date
+    # Always update notes (allows clearing by sending null)
+    if 'notes' in data.model_fields_set:
+        log.notes = data.notes
+
+    await db.commit()
+    await db.refresh(log)
+
+    # Reload with relationships for the response
+    result = await db.execute(
+        select(DailyLog)
+        .options(selectinload(DailyLog.location), selectinload(DailyLog.events))
+        .where(DailyLog.id == log_id)
+    )
+    log = result.scalar_one_or_none()
+
+    return DailyLogResponse(
+        id=log.id,
+        location_id=log.location_id,
+        log_date=log.log_date,
+        has_events=log.has_events,
+        notes=log.notes,
+        is_locked=log.is_locked,
+        created_at=log.created_at,
+        location_name=log.location.name if log.location else None,
+        events=[]
+    )
 
 # ==================== EVENT ROUTES (Admin Only) ====================
 @api_router.put("/events/{event_id}", response_model=EventResponse)
