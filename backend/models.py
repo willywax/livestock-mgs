@@ -108,6 +108,22 @@ class AbortionStage(str, enum.Enum):
     MID = "mid"          # 3-6 months
     LATE = "late"        # 6-9 months
 
+class AnimalSex(str, enum.Enum):
+    MALE = "male"
+    FEMALE = "female"
+
+class AnimalAcquisitionType(str, enum.Enum):
+    BORN = "born"
+    BOUGHT = "bought"
+    GIFT_IN = "gift_in"
+
+class AnimalStatus(str, enum.Enum):
+    ACTIVE = "active"
+    SOLD = "sold"
+    DEAD = "dead"
+    TRANSFERRED = "transferred"
+    MISSING = "missing"
+
 class Disease(Base):
     """List of diseases for death cause tracking"""
     __tablename__ = "diseases"
@@ -173,15 +189,44 @@ class Event(Base):
 class StockLevel(Base):
     """Computed stock levels - updated after each event"""
     __tablename__ = "stock_levels"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
     species = Column(SQLEnum(SpeciesType), nullable=False)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
     current_count = Column(Integer, default=0, nullable=False)
     last_updated = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    
+
     location = relationship("Location")
     category = relationship("Category")
-    
+
     __table_args__ = (UniqueConstraint('location_id', 'species', 'category_id', name='uq_stock_level'),)
+
+class Animal(Base):
+    """Individual animal registry with tag-level tracking"""
+    __tablename__ = "animals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tag_number = Column(String(100), nullable=False, index=True)
+    name = Column(String(100), nullable=True)
+    species = Column(SQLEnum(SpeciesType), nullable=False)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
+    sex = Column(SQLEnum(AnimalSex), nullable=False)
+    birth_date = Column(Date, nullable=True)
+    mother_tag = Column(String(100), nullable=True)
+    father_tag = Column(String(100), nullable=True)
+    acquisition_type = Column(SQLEnum(AnimalAcquisitionType), nullable=False)
+    acquisition_date = Column(Date, nullable=False)
+    status = Column(SQLEnum(AnimalStatus), default=AnimalStatus.ACTIVE, nullable=False)
+    status_changed_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    category = relationship("Category")
+    location = relationship("Location")
+    creator = relationship("User", foreign_keys=[created_by])
+
+    __table_args__ = (UniqueConstraint('tag_number', 'species', 'location_id', name='uq_animal_tag'),)

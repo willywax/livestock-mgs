@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime, date
-from models import UserRole, EventType, SpeciesType, AbortionStage
+from models import UserRole, EventType, SpeciesType, AbortionStage, AnimalSex, AnimalAcquisitionType, AnimalStatus
 
 # Auth schemas
 class UserLogin(BaseModel):
@@ -427,3 +427,64 @@ class AnalyticsResponse(BaseModel):
     net_changes: List[NetChange]
     location_id: Optional[int] = None
     location_name: Optional[str] = None
+
+# Animal schemas
+class AnimalCreate(BaseModel):
+    tag_number: str
+    name: Optional[str] = None
+    species: SpeciesType
+    category_id: int
+    location_id: int
+    sex: AnimalSex
+    birth_date: Optional[date] = None
+    mother_tag: Optional[str] = None
+    father_tag: Optional[str] = None
+    acquisition_type: AnimalAcquisitionType
+    acquisition_date: date
+    notes: Optional[str] = None
+
+class AnimalUpdate(BaseModel):
+    tag_number: Optional[str] = None
+    name: Optional[str] = None
+    category_id: Optional[int] = None
+    location_id: Optional[int] = None
+    sex: Optional[AnimalSex] = None
+    birth_date: Optional[date] = None
+    mother_tag: Optional[str] = None
+    father_tag: Optional[str] = None
+    notes: Optional[str] = None
+    status: Optional[AnimalStatus] = None
+
+class AnimalTransfer(BaseModel):
+    to_location_id: int
+    transfer_date: date
+    notes: Optional[str] = None
+
+class AnimalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    tag_number: str
+    name: Optional[str]
+    species: SpeciesType
+    category_id: int
+    location_id: int
+    sex: AnimalSex
+    birth_date: Optional[date]
+    mother_tag: Optional[str]
+    father_tag: Optional[str]
+    acquisition_type: AnimalAcquisitionType
+    acquisition_date: date
+    status: AnimalStatus
+    status_changed_at: Optional[datetime]
+    notes: Optional[str]
+    created_at: datetime
+    category_name_sw: Optional[str] = None
+    category_name_en: Optional[str] = None
+    location_name: Optional[str] = None
+    created_by_name: Optional[str] = None
+
+class BulkImportResult(BaseModel):
+    created: int
+    skipped: int
+    errors: List[str]
+    message: str

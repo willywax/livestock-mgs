@@ -16,6 +16,7 @@ import OpeningBalances from "./pages/OpeningBalances";
 import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
+import Animals from "./pages/Animals";
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -96,6 +97,15 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <LocationDetail />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/animals"
+        element={
+          <ProtectedRoute>
+            <Animals />
           </ProtectedRoute>
         }
       />

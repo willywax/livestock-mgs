@@ -105,4 +105,19 @@ export const getRangeReport = (params) => api.get('/reports/range', { params });
 export const getAnalyticsReport = (params) => api.get('/reports/analytics', { params });
 export const getDetailedReport = (params) => api.get('/reports/detailed', { params });
 
+// Animals
+export const getAnimals = (params) => api.get('/animals', { params });
+export const getAnimal = (id) => api.get(`/animals/${id}`);
+export const createAnimal = (data) => api.post('/animals', data);
+export const updateAnimal = (id, data) => api.put(`/animals/${id}`, data);
+export const transferAnimal = (id, data) => api.post(`/animals/${id}/transfer`, data);
+export const bulkImportAnimals = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/animals/bulk-import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+export const downloadAnimalsTemplate = () => `${API_URL}/api/templates/animals`;
+
 export default api;
