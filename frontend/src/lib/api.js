@@ -120,4 +120,27 @@ export const bulkImportAnimals = (file) => {
 };
 export const downloadAnimalsTemplate = () => `${API_URL}/api/templates/animals`;
 
+// Health Intervals
+export const getHealthIntervals = (params) => api.get('/health-intervals', { params });
+export const createHealthInterval = (data) => api.post('/health-intervals', data);
+export const updateHealthInterval = (id, data) => api.put(`/health-intervals/${id}`, data);
+export const deleteHealthInterval = (id) => api.delete(`/health-intervals/${id}`);
+
+// Farm Health Events
+export const getFarmHealthEvents = (params) => api.get('/farm-health', { params });
+export const getFarmHealthEventById = (id) => api.get(`/farm-health/${id}`);
+export const createFarmHealthEvent = (data) => api.post('/farm-health', data);
+export const updateFarmHealthEvent = (id, data) => api.put(`/farm-health/${id}`, data);
+export const deleteFarmHealthEvent = (id) => api.delete(`/farm-health/${id}`);
+export const getLastEvents = (params) => api.get('/farm-health/last-events', { params });
+export const getUpcomingHealthEvents = (params) => api.get('/farm-health/upcoming', { params });
+export const getProductSuggestions = (params) => api.get('/farm-health/product-suggestions', { params });
+
+// Vaccine Types
+export const getVaccineTypes = (species) => api.get('/vaccine-types', { params: species ? { species } : {} });
+export const createVaccineType = (data) => api.post('/vaccine-types', data);
+export const updateVaccineType = (id, data) => api.put(`/vaccine-types/${id}`, data);
+export const deleteVaccineType = (id) => api.delete(`/vaccine-types/${id}`);
+export const getLastVaccinations = () => api.get('/farm-health-events/last-vaccinations');
+
 export default api;

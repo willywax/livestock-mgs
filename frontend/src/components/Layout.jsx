@@ -13,7 +13,8 @@ import {
   List,
   X,
   Cow,
-  Gear
+  Gear,
+  FirstAidKit,
 } from '@phosphor-icons/react';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
@@ -22,6 +23,7 @@ const navItems = [
   { path: '/', icon: House, label: 'Dashboard', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/locations', icon: MapPin, label: 'Locations', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/animals', icon: Tag, label: 'Animals', roles: ['admin', 'data_entry', 'viewer'] },
+  { path: '/farm-health', icon: FirstAidKit, label: 'Farm Health', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/daily-logs', icon: CalendarBlank, label: 'Daily Logs', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/opening-balances', icon: Scales, label: 'Opening Balances', roles: ['admin'] },
   { path: '/reports', icon: ChartBar, label: 'Reports', roles: ['admin', 'data_entry', 'viewer'] },

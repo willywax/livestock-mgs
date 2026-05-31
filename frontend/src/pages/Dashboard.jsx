@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getDashboard, getLocations } from '../lib/api';
+import { getDashboard, getLocations, getLastEvents, getLastVaccinations } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Cow, TrendUp, TrendDown, Plus, Heartbeat, Skull, Baby, MapPin } from '@phosphor-icons/react';
+import { Cow, TrendUp, TrendDown, Plus, Heartbeat, Skull, Baby, MapPin, FirstAidKit, WarningCircle, Syringe } from '@phosphor-icons/react';
 import { SPECIES_CONFIG, formatDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 
@@ -183,6 +183,8 @@ function Dashboard() {
   const [locations, setLocations] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState('all');
   const [selectedPeriod, setSelectedPeriod] = useState('30');
+  const [healthSummaries, setHealthSummaries] = useState([]);
+  const [vaccinationSummaries, setVaccinationSummaries] = useState([]);
   const { isDataEntry } = useAuth();
 
   useEffect(function() {
@@ -199,6 +201,13 @@ function Dashboard() {
       setLocations(response.data);
     } catch (error) {
       console.error('Failed to load locations');
+    }
+    try {
+      const [healthRes, vacRes] = await Promise.all([getLastEvents(), getLastVaccinations()]);
+      setHealthSummaries(healthRes.data);
+      setVaccinationSummaries(vacRes.data);
+    } catch {
+      // Health data is non-critical
     }
   }
 
@@ -426,6 +435,126 @@ function Dashboard() {
               <CardContent>
                 <div className="space-y-4">
                   {locationItems}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {healthSummaries.length > 0 && (
+            <Card className="border-border/60">
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <FirstAidKit className="h-5 w-5 text-primary" />
+                    Farm Health
+                  </span>
+                  <Link to="/farm-health" className="text-xs font-normal text-muted-foreground hover:text-primary transition-colors">
+                    View all →
+                  </Link>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {healthSummaries.filter(function(s) { return s.is_overdue; }).length > 0 && (
+                  <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
+                    <WarningCircle className="h-4 w-4 text-red-600 flex-shrink-0" weight="fill" />
+                    <p className="text-xs text-red-700 font-medium">
+                      {healthSummaries.filter(function(s) { return s.is_overdue; }).length} overdue health intervention(s)
+                    </p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {[...healthSummaries].sort(function(a, b) {
+                    function rank(s) {
+                      if (s.is_overdue) return 0;
+                      if (!s.next_due_date) return 3;
+                      const days = Math.ceil((new Date(s.next_due_date) - new Date()) / (1000 * 60 * 60 * 24));
+                      return days <= 7 ? 1 : 2;
+                    }
+                    return rank(a) - rank(b);
+                  }).slice(0, 8).map(function(s, i) {
+                    return (
+                      <div key={i} className={`p-2 rounded-lg border text-xs ${s.is_overdue ? 'border-red-200 bg-red-50/40' : 'border-border bg-muted/30'}`}>
+                        <p className="font-medium text-foreground truncate capitalize">{s.event_type}</p>
+                        <p className="text-muted-foreground truncate">{s.location_name}{s.species ? ` · ${s.species}` : ''}</p>
+                        {s.is_overdue ? (
+                          <p className="text-red-600 font-semibold mt-0.5">
+                            {s.days_overdue ? `${s.days_overdue}d overdue` : 'Never done'}
+                          </p>
+                        ) : s.next_due_date ? (
+                          <p className="text-green-600 mt-0.5">Due {formatDate(s.next_due_date)}</p>
+                        ) : (
+                          <p className="text-muted-foreground mt-0.5">{s.last_date ? formatDate(s.last_date) : '—'}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {vaccinationSummaries.length > 0 && (
+            <Card className="border-border/60">
+              <CardHeader>
+                <CardTitle className="font-heading flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Syringe className="h-5 w-5 text-primary" />
+                    Vaccination Status
+                  </span>
+                  <Link to="/farm-health?event_type=VACCINATION" className="text-xs font-normal text-muted-foreground hover:text-primary transition-colors">
+                    View all →
+                  </Link>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-muted-foreground border-b">
+                        <th className="text-left font-medium pb-2 pr-3">Farm</th>
+                        <th className="text-left font-medium pb-2 pr-3">Species</th>
+                        <th className="text-left font-medium pb-2 pr-3">Vaccine</th>
+                        <th className="text-left font-medium pb-2 pr-3">Last done</th>
+                        <th className="text-left font-medium pb-2 pr-3">Next due</th>
+                        <th className="text-left font-medium pb-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...vaccinationSummaries].sort(function(a, b) {
+                        function rank(s) {
+                          if (s.is_overdue) return 0;
+                          if (!s.next_due_date) return 3;
+                          const days = Math.ceil((new Date(s.next_due_date) - new Date()) / (1000 * 60 * 60 * 24));
+                          return days <= 30 ? 1 : 2;
+                        }
+                        return rank(a) - rank(b);
+                      }).map(function(s, i) {
+                        let dotColor = 'bg-gray-300';
+                        let statusText = 'No schedule';
+                        if (s.is_overdue) { dotColor = 'bg-red-500'; statusText = s.days_since ? `${s.days_since}d overdue` : 'Overdue'; }
+                        else if (s.next_due_date) {
+                          const days = Math.ceil((new Date(s.next_due_date) - new Date()) / (1000 * 60 * 60 * 24));
+                          if (days <= 30) { dotColor = 'bg-amber-400'; statusText = `Due in ${days}d`; }
+                          else { dotColor = 'bg-green-500'; statusText = formatDate(s.next_due_date); }
+                        }
+                        return (
+                          <tr key={i} className="border-b border-border/50 last:border-0">
+                            <td className="py-2 pr-3 font-medium text-foreground">{s.location_name}</td>
+                            <td className="py-2 pr-3 capitalize text-muted-foreground">{s.species}</td>
+                            <td className="py-2 pr-3 text-foreground">{s.vaccine_type_name}</td>
+                            <td className="py-2 pr-3 text-muted-foreground">{s.last_event_date ? formatDate(s.last_event_date) : '—'}</td>
+                            <td className="py-2 pr-3 text-muted-foreground">{s.next_due_date ? formatDate(s.next_due_date) : '—'}</td>
+                            <td className="py-2">
+                              <span className="flex items-center gap-1.5">
+                                <span className={`h-2 w-2 rounded-full flex-shrink-0 ${dotColor}`} />
+                                <span className={s.is_overdue ? 'text-red-600 font-semibold' : 'text-muted-foreground'}>{statusText}</span>
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </CardContent>
             </Card>
