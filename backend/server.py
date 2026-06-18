@@ -98,6 +98,15 @@ async def startup():
             "ADD COLUMN IF NOT EXISTS vaccine_type_id INTEGER "
             "REFERENCES vaccine_types(id)"
         ))
+        await conn.execute(text(
+            "ALTER TABLE events ADD COLUMN IF NOT EXISTS gift_party_name VARCHAR(255)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE events ADD COLUMN IF NOT EXISTS gift_party_phone VARCHAR(50)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE events ADD COLUMN IF NOT EXISTS gift_reason TEXT"
+        ))
 
     # Seed initial data
     async for db in get_db():
@@ -1161,15 +1170,16 @@ async def update_daily_log(
         events=[]
     )
 
-# ==================== EVENT ROUTES (Admin Only) ====================
+# ==================== EVENT ROUTES ====================
 @api_router.put("/events/{event_id}", response_model=EventResponse)
 async def update_event(
     event_id: int,
     data: EventUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN))
+    # CHANGED: was require_roles(UserRole.ADMIN) — DATA_ENTRY now allowed
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY))
 ):
-    """Update an event - Admin only. Reverses old stock changes and applies new ones."""
+    """Update an event. Reverses old stock changes and applies new ones."""
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.daily_log))
@@ -1178,10 +1188,34 @@ async def update_event(
     event = result.scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    
-    # Admin can edit even locked logs
+
+    # ADDED: Lock check — DATA_ENTRY cannot edit events in a locked log
+    if event.daily_log.is_locked and current_user.role == UserRole.DATA_ENTRY:
+        raise HTTPException(
+            status_code=403,
+            detail="This log is locked. Only an admin can edit events in a locked log."
+        )
+
     location_id = event.daily_log.location_id
-    
+
+    # ADDED: Type-specific field guard — reject fields that don't apply to event_type
+    _type_fields: dict = {
+        EventType.DEATH:    {"cause_of_death", "disease_id", "days_sick", "attending_vet"},
+        EventType.BIRTH:    {"mother_tag", "offspring_tags"},
+        EventType.SOLD:     {"buyer_name", "buyer_phone", "buyer_address", "sale_price"},
+        EventType.GIFT_IN:  {"gift_party_name", "gift_party_phone", "gift_reason"},
+        EventType.GIFT_OUT: {"gift_party_name", "gift_party_phone", "gift_reason"},
+    }
+    _all_typed = {f for fields in _type_fields.values() for f in fields}
+    _allowed   = _type_fields.get(event.event_type, set())
+    _sent      = {k for k, v in data.model_dump(exclude_none=True).items() if k in _all_typed}
+    _rejected  = _sent - _allowed
+    if _rejected:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Fields not applicable to {event.event_type.value} event: {', '.join(sorted(_rejected))}"
+        )
+
     # Reverse the old stock changes if it was a stock event
     if event.is_stock_event:
         old_event_data = EventCreate(
@@ -1196,7 +1230,7 @@ async def update_event(
             is_stock_event=True
         )
         await reverse_event_stock(db, location_id, old_event_data)
-    
+
     # Update event fields
     if data.event_type is not None:
         event.event_type = data.event_type
@@ -1216,11 +1250,12 @@ async def update_event(
         event.to_category_id = data.to_category_id
     if data.notes is not None:
         event.notes = data.notes
-    # New fields
     if data.animal_tags is not None:
         event.animal_tags = data.animal_tags
     if data.cause_of_death is not None:
         event.cause_of_death = data.cause_of_death
+    if data.disease_id is not None:
+        event.disease_id = data.disease_id
     if data.days_sick is not None:
         event.days_sick = data.days_sick
     if data.attending_vet is not None:
@@ -1237,7 +1272,14 @@ async def update_event(
         event.buyer_address = data.buyer_address
     if data.sale_price is not None:
         event.sale_price = data.sale_price
-    
+    # ADDED: Gift-specific fields
+    if data.gift_party_name is not None:
+        event.gift_party_name = data.gift_party_name
+    if data.gift_party_phone is not None:
+        event.gift_party_phone = data.gift_party_phone
+    if data.gift_reason is not None:
+        event.gift_reason = data.gift_reason
+
     # Apply new stock changes
     if event.is_stock_event:
         new_event_data = EventCreate(
@@ -1252,10 +1294,10 @@ async def update_event(
             is_stock_event=True
         )
         await apply_event_to_stock(db, location_id, new_event_data)
-    
+
     await db.commit()
     await db.refresh(event)
-    
+
     return EventResponse(
         id=event.id,
         event_type=event.event_type,
@@ -1278,7 +1320,11 @@ async def update_event(
         buyer_name=event.buyer_name,
         buyer_phone=event.buyer_phone,
         buyer_address=event.buyer_address,
-        sale_price=event.sale_price
+        sale_price=event.sale_price,
+        # ADDED: Gift-specific fields
+        gift_party_name=event.gift_party_name,
+        gift_party_phone=event.gift_party_phone,
+        gift_reason=event.gift_reason,
     )
 
 @api_router.delete("/events/{event_id}")

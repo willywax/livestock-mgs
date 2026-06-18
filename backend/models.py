@@ -174,7 +174,12 @@ class Event(Base):
     buyer_phone = Column(String(50), nullable=True)
     buyer_address = Column(Text, nullable=True)
     sale_price = Column(Integer, nullable=True)  # Price per animal or total
-    
+
+    # Gift-specific fields (GIFT_IN / GIFT_OUT only)
+    gift_party_name = Column(String(255), nullable=True)
+    gift_party_phone = Column(String(50), nullable=True)
+    gift_reason = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     

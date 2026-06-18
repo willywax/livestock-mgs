@@ -148,6 +148,9 @@ class EventUpdate(BaseModel):
     buyer_phone: Optional[str] = None
     buyer_address: Optional[str] = None
     sale_price: Optional[int] = None
+    gift_party_name: Optional[str] = None
+    gift_party_phone: Optional[str] = None
+    gift_reason: Optional[str] = None
 
 class EventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -182,6 +185,9 @@ class EventResponse(BaseModel):
     buyer_phone: Optional[str] = None
     buyer_address: Optional[str] = None
     sale_price: Optional[int] = None
+    gift_party_name: Optional[str] = None
+    gift_party_phone: Optional[str] = None
+    gift_reason: Optional[str] = None
 
 # Daily Log schemas
 class DailyLogCreate(BaseModel):

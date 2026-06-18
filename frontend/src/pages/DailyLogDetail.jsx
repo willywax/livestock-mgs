@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getDailyLog, lockDailyLog, createEvent, updateEvent, deleteEvent, getCategories, getLocations, updateDailyLog } from '../lib/api';
+import { getDailyLog, lockDailyLog, createEvent, updateEvent, deleteEvent, getCategories, getLocations, updateDailyLog, getDiseases } from '../lib/api';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../components/ui/sheet';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -13,7 +15,7 @@ import { Calendar } from '../components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../components/ui/alert-dialog';
-import { ArrowLeft, CalendarBlank, MapPin, Lock, CheckCircle, ArrowsLeftRight, ArrowsDownUp, Pencil, Trash, Plus } from '@phosphor-icons/react';
+import { ArrowLeft, CalendarBlank, MapPin, Lock, CheckCircle, ArrowsLeftRight, ArrowsDownUp, Pencil, Trash, Plus, Eye } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { EVENT_TYPES, SPECIES_CONFIG, formatDate, formatDateTime } from '../lib/utils';
@@ -32,6 +34,8 @@ const EVENT_TYPE_OPTIONS = [
   { value: 'abortion', label: 'Abortion (Note)' },
 ];
 
+const NO_DISEASE_VALUE = 'none';
+
 const DailyLogDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -40,7 +44,17 @@ const DailyLogDetail = () => {
   const [locking, setLocking] = useState(false);
   const [categories, setCategories] = useState({});
   const [locations, setLocations] = useState([]);
-  const { isAdmin } = useAuth();
+  const { isAdmin, isDataEntry } = useAuth();
+
+  // Detail sheet state
+  const [detailSheetOpen, setDetailSheetOpen] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [sheetMode, setSheetMode] = useState('view'); // 'view' | 'edit'
+  const [detailEditForm, setDetailEditForm] = useState({});
+  const [detailSaving, setDetailSaving] = useState(false);
+
+  // Diseases for DEATH edit select
+  const [diseases, setDiseases] = useState([]);
 
   // Edit event dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -87,11 +101,12 @@ const DailyLogDetail = () => {
 
   const loadCategories = useCallback(async () => {
     try {
-      const [cattleRes, sheepRes, goatRes, locRes] = await Promise.all([
+      const [cattleRes, sheepRes, goatRes, locRes, diseaseRes] = await Promise.all([
         getCategories('cattle'),
         getCategories('sheep'),
         getCategories('goat'),
-        getLocations()
+        getLocations(),
+        getDiseases(),
       ]);
       setCategories({
         cattle: cattleRes.data,
@@ -99,6 +114,7 @@ const DailyLogDetail = () => {
         goat: goatRes.data
       });
       setLocations(locRes.data);
+      setDiseases(diseaseRes.data);
     } catch (error) {
       console.error('Failed to load categories');
     }
@@ -259,6 +275,79 @@ const DailyLogDetail = () => {
     }
   };
 
+  const formatTZS = (amount) =>
+    amount != null ? `TZS ${Number(amount).toLocaleString()}` : '—';
+
+  const DetailRow = ({ label, value }) => (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="font-medium text-sm">{value || '—'}</span>
+    </div>
+  );
+
+  const openDetailSheet = (event) => {
+    setSelectedEvent(event);
+    setSheetMode('view');
+    setDetailEditForm({
+      cause_of_death: event.cause_of_death || '',
+      disease_id: event.disease_id?.toString() || '',
+      days_sick: event.days_sick?.toString() || '',
+      attending_vet: event.attending_vet || '',
+      mother_tag: event.mother_tag || '',
+      offspring_tags: event.offspring_tags || '',
+      buyer_name: event.buyer_name || '',
+      buyer_phone: event.buyer_phone || '',
+      buyer_address: event.buyer_address || '',
+      sale_price: event.sale_price?.toString() || '',
+      gift_party_name: event.gift_party_name || '',
+      gift_party_phone: event.gift_party_phone || '',
+      gift_reason: event.gift_reason || '',
+      animal_tags: event.animal_tags || '',
+      notes: event.notes || '',
+    });
+    setDetailSheetOpen(true);
+  };
+
+  const handleDetailSave = async () => {
+    setDetailSaving(true);
+    try {
+      const et = selectedEvent.event_type;
+      const payload = {};
+
+      if (detailEditForm.notes) payload.notes = detailEditForm.notes;
+      if (detailEditForm.animal_tags) payload.animal_tags = detailEditForm.animal_tags;
+
+      if (et === 'death') {
+        if (detailEditForm.cause_of_death) payload.cause_of_death = detailEditForm.cause_of_death;
+        if (detailEditForm.disease_id) payload.disease_id = parseInt(detailEditForm.disease_id);
+        if (detailEditForm.days_sick) payload.days_sick = parseInt(detailEditForm.days_sick);
+        if (detailEditForm.attending_vet) payload.attending_vet = detailEditForm.attending_vet;
+      } else if (et === 'birth') {
+        if (detailEditForm.mother_tag) payload.mother_tag = detailEditForm.mother_tag;
+        if (detailEditForm.offspring_tags) payload.offspring_tags = detailEditForm.offspring_tags;
+      } else if (et === 'sold') {
+        if (detailEditForm.buyer_name) payload.buyer_name = detailEditForm.buyer_name;
+        if (detailEditForm.buyer_phone) payload.buyer_phone = detailEditForm.buyer_phone;
+        if (detailEditForm.buyer_address) payload.buyer_address = detailEditForm.buyer_address;
+        if (detailEditForm.sale_price) payload.sale_price = parseInt(detailEditForm.sale_price);
+      } else if (et === 'gift_in' || et === 'gift_out') {
+        if (detailEditForm.gift_party_name) payload.gift_party_name = detailEditForm.gift_party_name;
+        if (detailEditForm.gift_party_phone) payload.gift_party_phone = detailEditForm.gift_party_phone;
+        if (detailEditForm.gift_reason) payload.gift_reason = detailEditForm.gift_reason;
+      }
+
+      await updateEvent(selectedEvent.id, payload);
+      toast.success('Event updated');
+      setDetailSheetOpen(false);
+      setSheetMode('view');
+      loadLog();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to update event');
+    } finally {
+      setDetailSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -408,6 +497,14 @@ const DailyLogDetail = () => {
                         </Badge>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openDetailSheet(event)}
+                          data-testid={`view-event-${idx}`}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
                         <span className="text-2xl font-bold font-heading">
                           {event.count}
                         </span>
@@ -494,6 +591,320 @@ const DailyLogDetail = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* ===== Event Detail / Edit Sheet ===== */}
+      <Sheet
+        open={detailSheetOpen}
+        onOpenChange={(open) => { setDetailSheetOpen(open); if (!open) setSheetMode('view'); }}
+      >
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+          {selectedEvent && (() => {
+            const eventConfig = EVENT_TYPES[selectedEvent.event_type];
+            const speciesConfig = SPECIES_CONFIG[selectedEvent.species];
+            const et = selectedEvent.event_type;
+            const typeSpecificTypes = ['death', 'birth', 'sold', 'gift_in', 'gift_out'];
+            const canEditInSheet = isDataEntry && typeSpecificTypes.includes(et);
+            const isLocked = log?.is_locked;
+
+            return (
+              <>
+                <SheetHeader className="mb-4">
+                  <SheetTitle className="font-heading">Event Details</SheetTitle>
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <Badge className={eventConfig?.color}>
+                      {eventConfig?.label || et}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      style={{ borderColor: speciesConfig?.color, color: speciesConfig?.color }}
+                    >
+                      {speciesConfig?.label?.split(' ')[0]}
+                    </Badge>
+                    {isLocked && (
+                      <Badge className="bg-green-100 text-green-800 gap-1">
+                        <Lock className="h-3 w-3" /> Locked
+                      </Badge>
+                    )}
+                  </div>
+                </SheetHeader>
+
+                {/* Always-visible summary */}
+                <div className="grid grid-cols-2 gap-3 mb-5 p-3 bg-muted/40 rounded-lg text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Category</p>
+                    <p className="font-medium">{selectedEvent.category_name_sw || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Count</p>
+                    <p className="font-bold text-lg leading-tight">{selectedEvent.count}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-xs text-muted-foreground">Recorded</p>
+                    <p className="font-medium">{formatDateTime(selectedEvent.created_at)}</p>
+                  </div>
+                </div>
+
+                {sheetMode === 'view' ? (
+                  /* ---- READ-ONLY VIEW ---- */
+                  <div className="space-y-3">
+                    {et === 'death' && (
+                      <>
+                        <DetailRow label="Cause of Death" value={selectedEvent.cause_of_death} />
+                        <DetailRow label="Disease" value={selectedEvent.disease_name} />
+                        <DetailRow label="Days Sick" value={selectedEvent.days_sick?.toString()} />
+                        <DetailRow label="Attending Vet" value={selectedEvent.attending_vet} />
+                        <DetailRow label="Animal Tags" value={selectedEvent.animal_tags} />
+                        <DetailRow label="Notes" value={selectedEvent.notes} />
+                      </>
+                    )}
+                    {et === 'birth' && (
+                      <>
+                        <DetailRow label="Mother Tag" value={selectedEvent.mother_tag} />
+                        <DetailRow label="Offspring Tags" value={selectedEvent.offspring_tags} />
+                        <DetailRow label="Animal Tags" value={selectedEvent.animal_tags} />
+                        <DetailRow label="Notes" value={selectedEvent.notes} />
+                      </>
+                    )}
+                    {et === 'sold' && (
+                      <>
+                        <DetailRow label="Buyer Name" value={selectedEvent.buyer_name} />
+                        <DetailRow label="Buyer Phone" value={selectedEvent.buyer_phone} />
+                        <DetailRow label="Buyer Address" value={selectedEvent.buyer_address} />
+                        <DetailRow label="Sale Price" value={formatTZS(selectedEvent.sale_price)} />
+                        <DetailRow label="Animal Tags" value={selectedEvent.animal_tags} />
+                        <DetailRow label="Notes" value={selectedEvent.notes} />
+                      </>
+                    )}
+                    {(et === 'gift_in' || et === 'gift_out') && (
+                      <>
+                        <DetailRow
+                          label={et === 'gift_in' ? 'Giver Name' : 'Recipient Name'}
+                          value={selectedEvent.gift_party_name}
+                        />
+                        <DetailRow label="Phone" value={selectedEvent.gift_party_phone} />
+                        <DetailRow label="Reason" value={selectedEvent.gift_reason} />
+                        <DetailRow label="Animal Tags" value={selectedEvent.animal_tags} />
+                        <DetailRow label="Notes" value={selectedEvent.notes} />
+                      </>
+                    )}
+                    {!typeSpecificTypes.includes(et) && (
+                      <>
+                        {selectedEvent.from_location_name && (
+                          <DetailRow label="From Location" value={selectedEvent.from_location_name} />
+                        )}
+                        {selectedEvent.to_location_name && (
+                          <DetailRow label="To Location" value={selectedEvent.to_location_name} />
+                        )}
+                        {selectedEvent.from_category_name_sw && (
+                          <DetailRow label="From Category" value={selectedEvent.from_category_name_sw} />
+                        )}
+                        {selectedEvent.to_category_name_sw && (
+                          <DetailRow label="To Category" value={selectedEvent.to_category_name_sw} />
+                        )}
+                        <DetailRow label="Notes" value={selectedEvent.notes} />
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  /* ---- EDIT FORM ---- */
+                  <div className="space-y-3">
+                    {et === 'death' && (
+                      <>
+                        <div className="space-y-1">
+                          <Label>Cause of Death</Label>
+                          <Input
+                            value={detailEditForm.cause_of_death}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, cause_of_death: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Disease</Label>
+                          <Select
+                            value={detailEditForm.disease_id || NO_DISEASE_VALUE}
+                            onValueChange={v => setDetailEditForm({
+                              ...detailEditForm,
+                              disease_id: v === NO_DISEASE_VALUE ? '' : v
+                            })}
+                          >
+                            <SelectTrigger><SelectValue placeholder="Select disease" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NO_DISEASE_VALUE}>None</SelectItem>
+                              {diseases.map(d => (
+                                <SelectItem key={d.id} value={d.id.toString()}>{d.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Days Sick</Label>
+                          <Input
+                            type="number" min="0"
+                            value={detailEditForm.days_sick}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, days_sick: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Attending Vet</Label>
+                          <Input
+                            value={detailEditForm.attending_vet}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, attending_vet: e.target.value })}
+                          />
+                        </div>
+                      </>
+                    )}
+                    {et === 'birth' && (
+                      <>
+                        <div className="space-y-1">
+                          <Label>Mother Tag</Label>
+                          <Input
+                            value={detailEditForm.mother_tag}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, mother_tag: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Offspring Tags</Label>
+                          <Textarea
+                            rows={2}
+                            value={detailEditForm.offspring_tags}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, offspring_tags: e.target.value })}
+                            placeholder="Comma-separated tags"
+                          />
+                        </div>
+                      </>
+                    )}
+                    {et === 'sold' && (
+                      <>
+                        <div className="space-y-1">
+                          <Label>Buyer Name</Label>
+                          <Input
+                            value={detailEditForm.buyer_name}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, buyer_name: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Buyer Phone</Label>
+                          <Input
+                            value={detailEditForm.buyer_phone}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, buyer_phone: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Buyer Address</Label>
+                          <Textarea
+                            rows={2}
+                            value={detailEditForm.buyer_address}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, buyer_address: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Sale Price (TZS)</Label>
+                          <Input
+                            type="number" min="0"
+                            value={detailEditForm.sale_price}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, sale_price: e.target.value })}
+                          />
+                        </div>
+                      </>
+                    )}
+                    {(et === 'gift_in' || et === 'gift_out') && (
+                      <>
+                        <div className="space-y-1">
+                          <Label>{et === 'gift_in' ? 'Giver Name' : 'Recipient Name'}</Label>
+                          <Input
+                            value={detailEditForm.gift_party_name}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, gift_party_name: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Phone</Label>
+                          <Input
+                            value={detailEditForm.gift_party_phone}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, gift_party_phone: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Reason</Label>
+                          <Textarea
+                            rows={2}
+                            value={detailEditForm.gift_reason}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, gift_reason: e.target.value })}
+                          />
+                        </div>
+                      </>
+                    )}
+                    <div className="space-y-1">
+                      <Label>Animal Tags</Label>
+                      <Textarea
+                        rows={2}
+                        value={detailEditForm.animal_tags}
+                        onChange={e => setDetailEditForm({ ...detailEditForm, animal_tags: e.target.value })}
+                        placeholder="Comma-separated tags"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Notes</Label>
+                      <Textarea
+                        rows={2}
+                        value={detailEditForm.notes}
+                        onChange={e => setDetailEditForm({ ...detailEditForm, notes: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Sheet footer */}
+                <div className="flex items-center justify-between mt-6 pt-4 border-t gap-2">
+                  <div>
+                    {sheetMode === 'view' && canEditInSheet && (
+                      isLocked && !isAdmin ? (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="flex items-center gap-1 text-muted-foreground text-sm cursor-default select-none">
+                                <Lock className="h-4 w-4" />
+                                Locked
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>Locked — only an admin can edit</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          {isLocked && isAdmin && (
+                            <Badge className="bg-amber-100 text-amber-800 text-xs">
+                              Editing a locked log
+                            </Badge>
+                          )}
+                          <Button size="sm" onClick={() => setSheetMode('edit')}>
+                            Edit
+                          </Button>
+                        </div>
+                      )
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {sheetMode === 'edit' && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSheetMode('view')}
+                          disabled={detailSaving}
+                        >
+                          Cancel
+                        </Button>
+                        <Button size="sm" onClick={handleDetailSave} disabled={detailSaving}>
+                          {detailSaving ? 'Saving...' : 'Save'}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </SheetContent>
+      </Sheet>
 
       {/* Add Event Dialog */}
       <Dialog open={addEventDialogOpen} onOpenChange={setAddEventDialogOpen}>
