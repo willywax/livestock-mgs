@@ -1,8 +1,10 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Date, Float, JSON, Enum as SQLEnum, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime, timezone
 import enum
+import uuid
 
 class UserRole(str, enum.Enum):
     ADMIN = "admin"
@@ -226,6 +228,7 @@ class Animal(Base):
     status = Column(SQLEnum(AnimalStatus), default=AnimalStatus.ACTIVE, nullable=False)
     status_changed_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
+    registry_tag_id = Column(String(100), nullable=True, index=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -311,3 +314,39 @@ class VaccineType(Base):
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
     creator = relationship("User", foreign_keys=[created_by])
+
+
+class RegistrySyncAction(str, enum.Enum):
+    STATUS_CHANGE = "STATUS_CHANGE"
+    EVENT = "EVENT"
+    REVERT = "REVERT"
+
+
+class RegistrySyncState(str, enum.Enum):
+    PENDING = "PENDING"
+    SENT = "SENT"
+    FAILED = "FAILED"
+    CONFLICT = "CONFLICT"
+
+
+class RegistrySyncOutbox(Base):
+    """Outbox of domain events awaiting delivery to the external tag Registry.
+
+    A row is inserted in the same transaction as the domain event it represents,
+    then delivery is attempted immediately (see registry_sync.enqueue_and_send) and
+    retried later by the /api/internal/sync/drain endpoint if it didn't land.
+    """
+    __tablename__ = "registry_sync_outbox"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_event_id = Column(String(100), unique=True, nullable=False, index=True)
+    tag_id = Column(String(100), nullable=False, index=True)
+    action = Column(SQLEnum(RegistrySyncAction), nullable=False)
+    intended_status = Column(String(50), nullable=True)
+    previous_status = Column(String(50), nullable=True)
+    payload = Column(JSONB, nullable=False)
+    state = Column(SQLEnum(RegistrySyncState), default=RegistrySyncState.PENDING, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    sent_at = Column(DateTime(timezone=True), nullable=True)

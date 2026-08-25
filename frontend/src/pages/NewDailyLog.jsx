@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Calendar } from '../components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Badge } from '../components/ui/badge';
+import RegistryTagPicker from '../components/RegistryTagPicker';
 import { CalendarBlank, MapPin, Plus, Trash, ArrowLeft, CheckCircle } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { SPECIES_CONFIG, EVENT_TYPES } from '../lib/utils';
@@ -39,10 +40,27 @@ const ABORTION_STAGES = [
   { value: 'late', label: 'Late (6-9 months)' }
 ];
 
-function EventFormItem({ event, index, categories, locations, diseases, onUpdate, onRemove }) {
+function EventFormItem({ event, index, categories, locations, diseases, locationName, onUpdate, onUpdateFields, onRemove }) {
   const speciesCategories = categories[event.species] || [];
   const eventType = event.event_type;
-  
+  const selectedCategoryName = speciesCategories.find(
+    (c) => c.id.toString() === event.category_id?.toString()
+  )?.name_en;
+
+  function handleAnimalTagPick(tag) {
+    onUpdateFields(index, {
+      animal_tags: tag ? tag.tag_id : '',
+      registry_previous_status: tag ? tag.status : '',
+    });
+  }
+
+  function handleDamTagPick(tag) {
+    onUpdateFields(index, {
+      mother_tag: tag ? tag.tag_id : '',
+      registry_previous_status: tag ? tag.status : '',
+    });
+  }
+
   return (
     <div className="p-4 rounded-lg border border-border bg-muted/30 space-y-4" data-testid={`event-${index}`}>
       <div className="flex items-center justify-between">
@@ -95,15 +113,28 @@ function EventFormItem({ event, index, categories, locations, diseases, onUpdate
         </div>
       </div>
 
-      {/* Animal Tags - Available for all events */}
+      {/* Animal Tags - death/sold pick a single registered animal via the Registry;
+          other event types keep free-text entry (may cover multiple animals) */}
       <div className="space-y-2">
         <Label>Animal Tag(s)</Label>
-        <Input
-          value={event.animal_tags || ''}
-          onChange={(e) => onUpdate(index, 'animal_tags', e.target.value)}
-          placeholder="Enter tag numbers (comma-separated for multiple)"
-          data-testid={`tags-${index}`}
-        />
+        {eventType === 'death' || eventType === 'sold' ? (
+          <RegistryTagPicker
+            species={event.species}
+            location={locationName}
+            category={selectedCategoryName}
+            value={event.animal_tags ? { tag_id: event.animal_tags, category: selectedCategoryName, location: locationName } : null}
+            onChange={handleAnimalTagPick}
+            placeholder="Select the animal from the Herd Tag Registry"
+            data-testid={`tags-${index}`}
+          />
+        ) : (
+          <Input
+            value={event.animal_tags || ''}
+            onChange={(e) => onUpdate(index, 'animal_tags', e.target.value)}
+            placeholder="Enter tag numbers (comma-separated for multiple)"
+            data-testid={`tags-${index}`}
+          />
+        )}
       </div>
 
       {eventType !== 'category_change' && eventType !== 'abortion' && (
@@ -193,11 +224,13 @@ function EventFormItem({ event, index, categories, locations, diseases, onUpdate
       {eventType === 'birth' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-green-50 rounded-lg">
           <div className="space-y-2">
-            <Label>Mother Tag</Label>
-            <Input
-              value={event.mother_tag || ''}
-              onChange={(e) => onUpdate(index, 'mother_tag', e.target.value)}
-              placeholder="Mother's tag number"
+            <Label>Mother Tag (Dam)</Label>
+            <RegistryTagPicker
+              species={event.species}
+              location={locationName}
+              value={event.mother_tag ? { tag_id: event.mother_tag, location: locationName } : null}
+              onChange={handleDamTagPick}
+              placeholder="Select the dam from the Herd Tag Registry"
               data-testid={`mother-tag-${index}`}
             />
           </div>
@@ -443,7 +476,8 @@ function NewDailyLog() {
       buyer_name: '',
       buyer_phone: '',
       buyer_address: '',
-      sale_price: ''
+      sale_price: '',
+      registry_previous_status: ''
     }]);
   }
 
@@ -469,6 +503,15 @@ function NewDailyLog() {
       newEvents[index].to_category_id = '';
     }
     
+    setEvents(newEvents);
+  }
+
+  // Applies several field changes to one event atomically — needed because RegistryTagPicker's
+  // onChange must set the tag field and registry_previous_status together (two sequential
+  // updateEvent calls would each read the same stale `events` closure and clobber each other).
+  function updateEventFields(index, patch) {
+    const newEvents = [...events];
+    newEvents[index] = { ...newEvents[index], ...patch };
     setEvents(newEvents);
   }
 
@@ -541,13 +584,21 @@ function NewDailyLog() {
             buyer_name: e.buyer_name || null,
             buyer_phone: e.buyer_phone || null,
             buyer_address: e.buyer_address || null,
-            sale_price: e.sale_price ? parseInt(e.sale_price) : null
+            sale_price: e.sale_price ? parseInt(e.sale_price) : null,
+            registry_previous_status: e.registry_previous_status || null
           };
         })
       };
 
-      await createDailyLog(payload);
+      const response = await createDailyLog(payload);
       toast.success('Daily log created successfully');
+
+      // Non-blocking: the events themselves are saved either way (see requirement #4) —
+      // a Registry conflict just means the tag's status didn't get updated there too.
+      (response.data?.events || [])
+        .filter((e) => e.registry_sync_warning)
+        .forEach((e) => toast.warning(e.registry_sync_warning));
+
       navigate('/daily-logs');
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to create daily log');
@@ -555,6 +606,8 @@ function NewDailyLog() {
       setSaving(false);
     }
   }
+
+  const selectedLocationName = locations.find((loc) => loc.id.toString() === locationId)?.name;
 
   if (loading) {
     return <div className="flex items-center justify-center py-12">Loading...</div>;
@@ -669,7 +722,9 @@ function NewDailyLog() {
                   categories={categories}
                   locations={locations}
                   diseases={diseases}
+                  locationName={selectedLocationName}
                   onUpdate={updateEvent}
+                  onUpdateFields={updateEventFields}
                   onRemove={removeEvent}
                 />
               );

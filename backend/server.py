@@ -9,6 +9,7 @@ import os
 import logging
 import csv
 import io
+import uuid
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime, date, timezone, timedelta
@@ -19,8 +20,13 @@ from models import (
     UserRole, EventType, SpeciesType, Disease, AbortionStage,
     Animal, AnimalSex, AnimalAcquisitionType, AnimalStatus,
     HealthEventType, CategoryScope, HealthInterval, FarmHealthEvent as FarmHealthEventModel,
-    VaccineType,
+    VaccineType, RegistrySyncState,
 )
+from registry_client import RegistryClient, RegistryUnavailable
+import registry_sync
+import registry_report
+from registry_sync import drain_outbox
+from registry_auth import require_cloud_run_service_account
 from schemas import (
     UserLogin, UserCreate, UserUpdate, UserResponse, TokenResponse,
     LocationCreate, LocationUpdate, LocationResponse,
@@ -35,11 +41,13 @@ from schemas import (
     AbortionAnalysis, AbortionBySpecies, AbortionByStage,
     SalesAnalysis, SalesBySpecies, SalesByBuyer,
     AnimalCreate, AnimalUpdate, AnimalTransfer, AnimalResponse, BulkImportResult,
+    AnimalAssignRegistryTag, UntaggedCalfResponse,
     HealthIntervalCreate, HealthIntervalUpdate, HealthIntervalResponse,
     FarmHealthEventCreate, FarmHealthEventUpdate, FarmHealthEventResponse,
     CategoryInfo, LastEventSummary,
     VaccineTypeCreate, VaccineTypeUpdate, VaccineTypeResponse,
     LastVaccinationSummary,
+    SyncDrainResult, SyncReportResponse, OutboxIssueResponse,
 )
 from auth import (
     verify_password, get_password_hash, create_access_token,
@@ -106,6 +114,14 @@ async def startup():
         ))
         await conn.execute(text(
             "ALTER TABLE events ADD COLUMN IF NOT EXISTS gift_reason TEXT"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE animals ADD COLUMN IF NOT EXISTS registry_tag_id VARCHAR(100)"
+        ))
+        # create_all() only creates brand-new tables, so the Column(index=True) above never
+        # applies retroactively to the pre-existing animals table — done explicitly here.
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_animals_registry_tag_id ON animals (registry_tag_id)"
         ))
 
     # Seed initial data
@@ -937,8 +953,10 @@ async def create_daily_log(
     )
     db.add(daily_log)
     await db.flush()
-    
+
     # Process events
+    created_events = []
+    pending_outbox_rows = []  # [(event, outbox_row), ...] — sent after the whole log commits
     for event_data in data.events:
         # Validate stock before creating event
         if event_data.is_stock_event and event_data.event_type not in [EventType.BIRTH, EventType.GIFT_IN, EventType.BOUGHT]:
@@ -948,7 +966,7 @@ async def create_daily_log(
             )
             if not can_proceed:
                 raise HTTPException(status_code=400, detail=message)
-        
+
         event = Event(
             daily_log_id=daily_log.id,
             event_type=event_data.event_type,
@@ -977,14 +995,68 @@ async def create_daily_log(
             created_by=current_user.id
         )
         db.add(event)
-        
+        await db.flush()  # populate event.id for the outbox row's source_event_id
+
+        outbox_row = registry_sync.build_outbox_row_for_event(
+            event_type=event.event_type,
+            event_id=event.id,
+            log_date=daily_log.log_date,
+            note=event.notes,
+            animal_tags=event.animal_tags,
+            mother_tag=event.mother_tag,
+            registry_previous_status=event_data.registry_previous_status,
+        )
+        if outbox_row is not None:
+            db.add(outbox_row)
+            pending_outbox_rows.append((event, outbox_row))
+
+        created_events.append(event)
+
         # Update stock levels
         if event_data.is_stock_event:
             await apply_event_to_stock(db, data.location_id, event_data)
-    
+
     await db.commit()
     await db.refresh(daily_log)
-    
+
+    # Attempt Registry delivery now that the domain events are durably committed.
+    warnings_by_event_id = {}
+    for event, outbox_row in pending_outbox_rows:
+        await registry_sync.enqueue_and_send(db, outbox_row)
+        if outbox_row.state == RegistrySyncState.CONFLICT:
+            warnings_by_event_id[event.id] = registry_sync.conflict_warning_message(outbox_row)
+
+    event_responses = [
+        EventResponse(
+            id=event.id,
+            event_type=event.event_type,
+            species=event.species,
+            category_id=event.category_id,
+            count=event.count,
+            from_location_id=event.from_location_id,
+            to_location_id=event.to_location_id,
+            from_category_id=event.from_category_id,
+            to_category_id=event.to_category_id,
+            notes=event.notes,
+            is_stock_event=event.is_stock_event,
+            created_at=event.created_at,
+            animal_tags=event.animal_tags,
+            cause_of_death=event.cause_of_death,
+            disease_id=event.disease_id,
+            days_sick=event.days_sick,
+            attending_vet=event.attending_vet,
+            abortion_stage=event.abortion_stage,
+            mother_tag=event.mother_tag,
+            offspring_tags=event.offspring_tags,
+            buyer_name=event.buyer_name,
+            buyer_phone=event.buyer_phone,
+            buyer_address=event.buyer_address,
+            sale_price=event.sale_price,
+            registry_sync_warning=warnings_by_event_id.get(event.id),
+        )
+        for event in created_events
+    ]
+
     return DailyLogResponse(
         id=daily_log.id,
         location_id=daily_log.location_id,
@@ -993,7 +1065,7 @@ async def create_daily_log(
         notes=daily_log.notes,
         is_locked=daily_log.is_locked,
         created_at=daily_log.created_at,
-        events=[]
+        events=event_responses
     )
 
 @api_router.post("/daily-logs/{log_id}/events", response_model=EventResponse)
@@ -1046,6 +1118,19 @@ async def add_event_to_daily_log(
         created_by=current_user.id
     )
     db.add(event)
+    await db.flush()  # populate event.id for the outbox row's source_event_id
+
+    outbox_row = registry_sync.build_outbox_row_for_event(
+        event_type=event.event_type,
+        event_id=event.id,
+        log_date=log.log_date,
+        note=event.notes,
+        animal_tags=event.animal_tags,
+        mother_tag=event.mother_tag,
+        registry_previous_status=event_data.registry_previous_status,
+    )
+    if outbox_row is not None:
+        db.add(outbox_row)
 
     # Update stock levels
     if event_data.is_stock_event:
@@ -1056,6 +1141,12 @@ async def add_event_to_daily_log(
 
     await db.commit()
     await db.refresh(event)
+
+    registry_sync_warning = None
+    if outbox_row is not None:
+        await registry_sync.enqueue_and_send(db, outbox_row)
+        if outbox_row.state == RegistrySyncState.CONFLICT:
+            registry_sync_warning = registry_sync.conflict_warning_message(outbox_row)
 
     return EventResponse(
         id=event.id,
@@ -1082,6 +1173,7 @@ async def add_event_to_daily_log(
         buyer_phone=event.buyer_phone,
         buyer_address=event.buyer_address,
         sale_price=event.sale_price,
+        registry_sync_warning=registry_sync_warning,
     )
 
 @api_router.post("/daily-logs/{log_id}/lock")
@@ -2859,6 +2951,7 @@ def _animal_response(animal: Animal) -> AnimalResponse:
         category_name_en=animal.category.name_en if animal.category else None,
         location_name=animal.location.name if animal.location else None,
         created_by_name=animal.creator.name if animal.creator else None,
+        registry_tag_id=animal.registry_tag_id,
     )
 
 @api_router.get("/templates/animals")
@@ -3107,6 +3200,85 @@ async def bulk_import_animals(
         errors=errors,
         message=f"Import complete. Created: {created}, Skipped (duplicates): {skipped}",
     )
+
+# Literal path — must be before /animals/{animal_id} or FastAPI would try to parse
+# "untagged-calves" as an int animal_id.
+@api_router.get("/animals/untagged-calves", response_model=List[UntaggedCalfResponse])
+async def list_untagged_calves(
+    min_age_days: int = Query(30, ge=0, le=3650),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Calves born at least `min_age_days` ago that still have no registry_tag_id —
+    for the admin tagging screen (assign one via POST /animals/{id}/assign-registry-tag)."""
+    cutoff = date.today() - timedelta(days=min_age_days)
+    result = await db.execute(
+        select(Animal)
+        .options(selectinload(Animal.category), selectinload(Animal.location))
+        .where(
+            and_(
+                Animal.acquisition_type == AnimalAcquisitionType.BORN,
+                Animal.status == AnimalStatus.ACTIVE,
+                Animal.registry_tag_id.is_(None),
+                Animal.birth_date.isnot(None),
+                Animal.birth_date <= cutoff,
+            )
+        )
+        .order_by(Animal.birth_date.asc())
+    )
+    animals = result.scalars().all()
+    today = date.today()
+    return [
+        UntaggedCalfResponse(
+            id=a.id,
+            tag_number=a.tag_number,
+            name=a.name,
+            species=a.species,
+            birth_date=a.birth_date,
+            days_since_birth=(today - a.birth_date).days if a.birth_date else None,
+            category_name_sw=a.category.name_sw if a.category else None,
+            location_name=a.location.name if a.location else None,
+        )
+        for a in animals
+    ]
+
+@api_router.post("/animals/{animal_id}/assign-registry-tag", response_model=AnimalResponse)
+async def assign_registry_tag(
+    animal_id: int,
+    data: AnimalAssignRegistryTag,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Assigns a Herd Tag Registry tag to a calf once it's been physically tagged."""
+    result = await db.execute(select(Animal).where(Animal.id == animal_id))
+    animal = result.scalar_one_or_none()
+    if not animal:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    if animal.registry_tag_id:
+        raise HTTPException(status_code=400, detail="This animal already has a registry tag assigned")
+
+    animal.registry_tag_id = data.tag_id
+    outbox_row = registry_sync.build_outbox_row_for_tag_assignment(animal_id=animal.id, tag_id=data.tag_id)
+    db.add(outbox_row)
+    await db.commit()
+
+    await registry_sync.enqueue_and_send(db, outbox_row)
+    registry_sync_warning = (
+        registry_sync.conflict_warning_message(outbox_row)
+        if outbox_row.state == RegistrySyncState.CONFLICT
+        else None
+    )
+
+    result = await db.execute(
+        select(Animal).options(
+            selectinload(Animal.category),
+            selectinload(Animal.location),
+            selectinload(Animal.creator),
+        ).where(Animal.id == animal_id)
+    )
+    response = _animal_response(result.scalar_one())
+    response.registry_sync_warning = registry_sync_warning
+    return response
 
 @api_router.get("/animals/{animal_id}", response_model=AnimalResponse)
 async def get_animal(
@@ -3883,6 +4055,81 @@ async def get_last_vaccinations(
 
     summaries.sort(key=_sort_key)
     return summaries
+
+# ==================== REGISTRY SYNC ROUTES ====================
+@api_router.post("/internal/sync/drain", response_model=SyncDrainResult)
+async def drain_registry_sync(
+    db: AsyncSession = Depends(get_db),
+    caller_service_account: str = Depends(require_cloud_run_service_account),
+):
+    """Retries queued registry_sync_outbox rows. Called by a Cloud Run scheduler
+    (or the Registry itself), not by ShambaManager users — see registry_auth.py."""
+    result = await drain_outbox(db)
+    return SyncDrainResult(**result)
+
+
+@api_router.get("/integration/registry/tags")
+async def search_registry_tags(
+    q: Optional[str] = None,
+    species: Optional[str] = None,
+    location: Optional[str] = None,
+    category: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    limit: Optional[int] = None,
+    cursor: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Thin passthrough to the Registry's tag search, for the frontend animal-tag picker."""
+    client = RegistryClient()
+    try:
+        return await client.search_tags(
+            current_user.name,
+            q=q,
+            species=species,
+            location=location,
+            category=category,
+            status=status_filter,
+            limit=limit,
+            cursor=cursor,
+        )
+    except RegistryUnavailable as exc:
+        raise HTTPException(status_code=503, detail=f"Registry is unreachable: {exc}")
+
+
+# NOTE: unlike /internal/sync/drain above, the two routes below are viewed and clicked by a
+# human admin in the browser (the "Registry Sync" page), so they use normal ShambaManager
+# JWT auth (require_roles) rather than the Cloud Run service-account dependency.
+@api_router.get("/internal/sync/report", response_model=SyncReportResponse)
+async def get_registry_sync_report(
+    since: Optional[date] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Outbox rows stuck in CONFLICT/FAILED, plus a cross-check of our death/sale syncs
+    against the Registry's own reconcile feed. Powers the admin Registry Sync page."""
+    report = await registry_report.build_sync_report(db, since or (date.today() - timedelta(days=90)))
+    return SyncReportResponse(
+        since=report.since,
+        generated_at=report.generated_at,
+        outbox_issues=report.outbox_issues,
+        reconcile_mismatches=report.reconcile_mismatches,
+        reconcile_unavailable=report.reconcile_unavailable,
+        reconcile_error=report.reconcile_error,
+    )
+
+@api_router.post("/internal/sync/{outbox_id}/retry", response_model=OutboxIssueResponse)
+async def retry_registry_sync_row(
+    outbox_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Manual retry from the admin Registry Sync page: re-queues one row to PENDING with
+    attempts reset. Actual delivery happens on the next /internal/sync/drain cycle."""
+    row = await registry_sync.retry_outbox_row(db, outbox_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Outbox row not found")
+    return OutboxIssueResponse.model_validate(row)
+
 
 # Include router
 app.include_router(api_router)

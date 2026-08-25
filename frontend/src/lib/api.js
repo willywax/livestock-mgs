@@ -143,4 +143,7 @@ export const updateVaccineType = (id, data) => api.put(`/vaccine-types/${id}`, d
 export const deleteVaccineType = (id) => api.delete(`/vaccine-types/${id}`);
 export const getLastVaccinations = () => api.get('/farm-health-events/last-vaccinations');
 
+// Registry integration
+export const searchRegistryTags = (params) => api.get('/integration/registry/tags', { params });
+
 export default api;

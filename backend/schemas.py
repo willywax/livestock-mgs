@@ -1,7 +1,12 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime, date
-from models import UserRole, EventType, SpeciesType, AbortionStage, AnimalSex, AnimalAcquisitionType, AnimalStatus, HealthEventType, CategoryScope, VaccineType as VaccineTypeModel
+from uuid import UUID
+from models import (
+    UserRole, EventType, SpeciesType, AbortionStage, AnimalSex, AnimalAcquisitionType, AnimalStatus,
+    HealthEventType, CategoryScope, VaccineType as VaccineTypeModel,
+    RegistrySyncAction, RegistrySyncState,
+)
 
 # Auth schemas
 class UserLogin(BaseModel):
@@ -125,6 +130,10 @@ class EventCreate(BaseModel):
     buyer_phone: Optional[str] = None
     buyer_address: Optional[str] = None
     sale_price: Optional[int] = None
+    # Set when the tag in animal_tags (death/sold) or mother_tag (birth) was picked via
+    # RegistryTagPicker, carrying that tag's status at selection time. Not persisted on
+    # Event — consumed only to build a registry_sync_outbox row for this event.
+    registry_previous_status: Optional[str] = None
 
 class EventUpdate(BaseModel):
     event_type: Optional[EventType] = None
@@ -188,6 +197,9 @@ class EventResponse(BaseModel):
     gift_party_name: Optional[str] = None
     gift_party_phone: Optional[str] = None
     gift_reason: Optional[str] = None
+    # Non-blocking warning when this event's registry_sync_outbox row came back CONFLICT —
+    # the event was still saved locally; see registry_sync.conflict_warning_message.
+    registry_sync_warning: Optional[str] = None
 
 # Daily Log schemas
 class DailyLogCreate(BaseModel):
@@ -466,6 +478,9 @@ class AnimalTransfer(BaseModel):
     transfer_date: date
     notes: Optional[str] = None
 
+class AnimalAssignRegistryTag(BaseModel):
+    tag_id: str
+
 class AnimalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -488,6 +503,19 @@ class AnimalResponse(BaseModel):
     category_name_en: Optional[str] = None
     location_name: Optional[str] = None
     created_by_name: Optional[str] = None
+    registry_tag_id: Optional[str] = None
+    registry_sync_warning: Optional[str] = None
+
+class UntaggedCalfResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    tag_number: str
+    name: Optional[str]
+    species: SpeciesType
+    birth_date: Optional[date]
+    days_since_birth: Optional[int] = None
+    category_name_sw: Optional[str] = None
+    location_name: Optional[str] = None
 
 class BulkImportResult(BaseModel):
     created: int
@@ -623,3 +651,41 @@ class LastVaccinationSummary(BaseModel):
     days_since: Optional[int]
     next_due_date: Optional[date]
     is_overdue: bool
+
+
+# Registry sync schemas
+class SyncDrainResult(BaseModel):
+    processed: int
+    sent: int
+    conflict: int
+    failed: int
+    pending: int
+
+class OutboxIssueResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    source_event_id: str
+    tag_id: str
+    action: RegistrySyncAction
+    intended_status: Optional[str]
+    previous_status: Optional[str]
+    state: RegistrySyncState
+    attempts: int
+    last_error: Optional[str]
+    created_at: datetime
+    sent_at: Optional[datetime]
+
+class ReconcileMismatchResponse(BaseModel):
+    tag_id: str
+    kind: str
+    detail: str
+    local_status: Optional[str] = None
+    registry_status: Optional[str] = None
+
+class SyncReportResponse(BaseModel):
+    since: date
+    generated_at: datetime
+    outbox_issues: List[OutboxIssueResponse]
+    reconcile_mismatches: List[ReconcileMismatchResponse]
+    reconcile_unavailable: bool
+    reconcile_error: Optional[str] = None
