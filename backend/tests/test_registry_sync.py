@@ -41,45 +41,49 @@ class FakeClient:
         self._revert = revert
         self.calls = []
 
-    async def post_status(self, actor_name, tag_id, *, status, source_event_id):
-        self.calls.append(("post_status", actor_name, tag_id, status, source_event_id))
+    async def post_status(self, actor_name, tag_id, *, event_type, new_status, source_event_id, event_date, expected_current_status=None, note=None):
+        self.calls.append(("post_status", actor_name, tag_id, event_type, new_status, source_event_id))
         if isinstance(self._post_status, Exception):
             raise self._post_status
         return self._post_status
 
-    async def post_event(self, actor_name, tag_id, *, event_type, source_event_id, payload):
-        self.calls.append(("post_event", actor_name, tag_id, event_type, source_event_id, payload))
+    async def post_event(self, actor_name, tag_id, *, event_type, source_event_id, event_date, note=None, value=None):
+        self.calls.append(("post_event", actor_name, tag_id, event_type, source_event_id))
         if isinstance(self._post_event, Exception):
             raise self._post_event
         return self._post_event
 
-    async def revert(self, actor_name, tag_id, *, source_event_id, previous_status):
-        self.calls.append(("revert", actor_name, tag_id, source_event_id, previous_status))
+    async def revert(self, actor_name, *, source_event_id, reason):
+        self.calls.append(("revert", actor_name, source_event_id, reason))
         if isinstance(self._revert, Exception):
             raise self._revert
         return self._revert
 
 
 class ScriptedClient:
-    """Like FakeClient, but the outcome is looked up by tag_id — for multi-row drain tests."""
+    """Like FakeClient, but the outcome is looked up by tag_id — for multi-row drain tests.
+
+    (revert has no tag_id in its real signature, so ScriptedClient keys revert lookups by
+    source_event_id instead — tests using revert should key outcomes_by_tag accordingly.)
+    """
 
     def __init__(self, outcomes_by_tag):
         self.outcomes_by_tag = outcomes_by_tag
 
-    async def _resolve(self, tag_id):
-        outcome = self.outcomes_by_tag[tag_id]
+    async def _resolve(self, key):
+        outcome = self.outcomes_by_tag[key]
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
 
-    async def post_status(self, actor_name, tag_id, *, status, source_event_id):
+    async def post_status(self, actor_name, tag_id, *, event_type, new_status, source_event_id, event_date, expected_current_status=None, note=None):
         return await self._resolve(tag_id)
 
-    async def post_event(self, actor_name, tag_id, *, event_type, source_event_id, payload):
+    async def post_event(self, actor_name, tag_id, *, event_type, source_event_id, event_date, note=None, value=None):
         return await self._resolve(tag_id)
 
-    async def revert(self, actor_name, tag_id, *, source_event_id, previous_status):
-        return await self._resolve(tag_id)
+    async def revert(self, actor_name, *, source_event_id, reason):
+        return await self._resolve(source_event_id)
 
 
 # ---------------------------------------------------------------------------
@@ -201,14 +205,14 @@ def test_enqueue_and_send_marks_conflict_and_does_not_retry(monkeypatch):
 def test_drain_outbox_applies_per_row_transitions_and_counts(monkeypatch):
     row_sent = _make_row(tag_id="T-SENT")
     row_conflict = _make_row(tag_id="T-CONFLICT", action=RegistrySyncAction.EVENT, intended_status=None)
-    row_failed = _make_row(tag_id="T-NOTFOUND", action=RegistrySyncAction.REVERT, previous_status="ACTIVE")
+    row_failed = _make_row(tag_id="T-NOTFOUND", source_event_id="EVT-NOTFOUND", action=RegistrySyncAction.REVERT, previous_status="ACTIVE")
     row_pending = _make_row(tag_id="T-PENDING", attempts=1)
 
     scripted = ScriptedClient(
         {
             "T-SENT": {"ok": True},
             "T-CONFLICT": RegistryConflict(current_status="SOLD"),
-            "T-NOTFOUND": RegistryNotFound(detail="gone"),
+            "EVT-NOTFOUND": RegistryNotFound(detail="gone"),
             "T-PENDING": RegistryUnavailable("timeout"),
         }
     )
@@ -288,9 +292,9 @@ def test_build_outbox_row_for_death():
     assert row.intended_status == registry_sync.DEATH_STATUS
     assert row.previous_status == "ACTIVE"
     assert row.payload == {
-        "event_date": "2026-08-26",
+        "registry_event_type": "DEATH",
+        "event_date": "2026-08-26T00:00:00+00:00",
         "note": "found in the field",
-        "expected_current_status": "ACTIVE",
     }
 
 
@@ -326,7 +330,7 @@ def test_build_outbox_row_for_birth_targets_dam_tag():
     assert row.action == RegistrySyncAction.EVENT
     assert row.intended_status is None
     assert row.previous_status is None
-    assert row.payload == {"event_type": "CALVED", "event_date": "2026-08-26", "note": "twins"}
+    assert row.payload == {"event_type": "CALVED", "event_date": "2026-08-26T00:00:00+00:00", "note": "twins"}
 
 
 def test_build_outbox_row_returns_none_when_tag_missing():
@@ -388,7 +392,7 @@ def test_build_outbox_row_for_tag_assignment():
     assert row.intended_status is None
     assert row.previous_status is None
     assert row.payload["event_type"] == "TAG_ASSIGNED"
-    assert "assigned_at" in row.payload
+    assert "event_date" in row.payload
 
 
 # ---------------------------------------------------------------------------

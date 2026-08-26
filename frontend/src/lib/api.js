@@ -119,6 +119,8 @@ export const bulkImportAnimals = (file) => {
   });
 };
 export const downloadAnimalsTemplate = () => `${API_URL}/api/templates/animals`;
+export const getUntaggedCalves = (params) => api.get('/animals/untagged-calves', { params });
+export const assignRegistryTag = (animalId, tagId) => api.post(`/animals/${animalId}/assign-registry-tag`, { tag_id: tagId });
 
 // Health Intervals
 export const getHealthIntervals = (params) => api.get('/health-intervals', { params });
@@ -145,5 +147,7 @@ export const getLastVaccinations = () => api.get('/farm-health-events/last-vacci
 
 // Registry integration
 export const searchRegistryTags = (params) => api.get('/integration/registry/tags', { params });
+export const getRegistrySyncReport = (params) => api.get('/internal/sync/report', { params });
+export const retryRegistrySyncRow = (outboxId) => api.post(`/internal/sync/${outboxId}/retry`);
 
 export default api;

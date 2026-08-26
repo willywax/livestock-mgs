@@ -32,28 +32,33 @@ async def _attempt_delivery(client: RegistryClient, row: RegistrySyncOutbox) -> 
 
     Does not commit — the caller owns the transaction.
     """
+    payload = row.payload or {}
     try:
         if row.action == RegistrySyncAction.STATUS_CHANGE:
             await client.post_status(
                 SYNC_ACTOR_NAME,
                 row.tag_id,
-                status=row.intended_status,
+                event_type=payload.get("registry_event_type", "DEATH"),
+                new_status=row.intended_status,
                 source_event_id=row.source_event_id,
+                event_date=payload.get("event_date"),
+                expected_current_status=row.previous_status,
+                note=payload.get("note"),
             )
         elif row.action == RegistrySyncAction.EVENT:
             await client.post_event(
                 SYNC_ACTOR_NAME,
                 row.tag_id,
-                event_type=(row.payload or {}).get("event_type", "EVENT"),
+                event_type=payload.get("event_type", "EVENT"),
                 source_event_id=row.source_event_id,
-                payload=row.payload,
+                event_date=payload.get("event_date"),
+                note=payload.get("note"),
             )
         elif row.action == RegistrySyncAction.REVERT:
             await client.revert(
                 SYNC_ACTOR_NAME,
-                row.tag_id,
                 source_event_id=row.source_event_id,
-                previous_status=row.previous_status,
+                reason=payload.get("reason", "Reverted by ShambaManager"),
             )
         else:
             raise ValueError(f"Unknown outbox action: {row.action}")
@@ -157,7 +162,8 @@ def build_outbox_row_for_event(
     if not registry_previous_status:
         return None
 
-    event_date_str = log_date.isoformat() if hasattr(log_date, "isoformat") else str(log_date)
+    # The Registry's schemas require a full date-time, not a bare date.
+    event_date_str = datetime.combine(log_date, datetime.min.time(), tzinfo=timezone.utc).isoformat()
 
     if event_type == EventType.DEATH:
         tag_id = (animal_tags or "").split(",")[0].strip()
@@ -170,9 +176,9 @@ def build_outbox_row_for_event(
             intended_status=DEATH_STATUS,
             previous_status=registry_previous_status,
             payload={
+                "registry_event_type": "DEATH",
                 "event_date": event_date_str,
                 "note": note,
-                "expected_current_status": registry_previous_status,
             },
         )
 
@@ -187,9 +193,9 @@ def build_outbox_row_for_event(
             intended_status=SOLD_STATUS,
             previous_status=registry_previous_status,
             payload={
+                "registry_event_type": "SALE",
                 "event_date": event_date_str,
                 "note": note,
-                "expected_current_status": registry_previous_status,
             },
         )
 
@@ -228,7 +234,7 @@ def build_outbox_row_for_tag_assignment(*, animal_id: int, tag_id: str) -> Regis
         action=RegistrySyncAction.EVENT,
         intended_status=None,
         previous_status=None,
-        payload={"event_type": "TAG_ASSIGNED", "assigned_at": datetime.now(timezone.utc).isoformat()},
+        payload={"event_type": "TAG_ASSIGNED", "event_date": datetime.now(timezone.utc).isoformat(), "note": None},
     )
 
 

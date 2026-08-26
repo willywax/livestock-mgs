@@ -43,9 +43,11 @@ const ABORTION_STAGES = [
 function EventFormItem({ event, index, categories, locations, diseases, locationName, onUpdate, onUpdateFields, onRemove }) {
   const speciesCategories = categories[event.species] || [];
   const eventType = event.event_type;
+  // The Herd Tag Registry's own category codes are Swahili (e.g. "KOO"), matching our
+  // name_sw field — not name_en.
   const selectedCategoryName = speciesCategories.find(
     (c) => c.id.toString() === event.category_id?.toString()
-  )?.name_en;
+  )?.name_sw;
 
   function handleAnimalTagPick(tag) {
     onUpdateFields(index, {
