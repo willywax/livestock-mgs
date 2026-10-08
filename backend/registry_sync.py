@@ -224,6 +224,34 @@ def conflict_warning_message(outbox_row: RegistrySyncOutbox) -> str:
     )
 
 
+async def upsert_outbox_row(session: AsyncSession, new_row: RegistrySyncOutbox) -> RegistrySyncOutbox:
+    """Inserts `new_row`, or — if a row with the same source_event_id already exists (e.g.
+    correcting a previously-linked tag via edit) — updates that row in place and re-queues
+    it instead of violating the unique constraint on source_event_id.
+
+    Caller adds the returned row to the session (already tracked if updated in place, or
+    freshly added here if new) and commits.
+    """
+    result = await session.execute(
+        select(RegistrySyncOutbox).where(RegistrySyncOutbox.source_event_id == new_row.source_event_id)
+    )
+    existing = result.scalar_one_or_none()
+    if existing is None:
+        session.add(new_row)
+        return new_row
+
+    existing.tag_id = new_row.tag_id
+    existing.action = new_row.action
+    existing.intended_status = new_row.intended_status
+    existing.previous_status = new_row.previous_status
+    existing.payload = new_row.payload
+    existing.state = RegistrySyncState.PENDING
+    existing.attempts = 0
+    existing.last_error = None
+    existing.sent_at = None
+    return existing
+
+
 def build_outbox_row_for_tag_assignment(*, animal_id: int, tag_id: str) -> RegistrySyncOutbox:
     """Outbox row for assigning a Registry tag to a calf once it's been physically tagged
     (see POST /api/animals/{id}/assign-registry-tag). Always built — unlike the

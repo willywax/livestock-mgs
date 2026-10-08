@@ -86,6 +86,35 @@ def test_search_tags_uppercases_species_location_category(monkeypatch):
     assert capture["kwargs"]["params"]["category"] == "KOO"
 
 
+@pytest.mark.parametrize(
+    ("local_category", "registry_category"),
+    [
+        ("Achishwa Dume", "ACHISHWA"),
+        ("Achishwa Jike", "ACHISHWA"),
+        ("Ndama Dume", "NDAMA"),
+        ("Ndama Jike", "NDAMA"),
+        ("Vichinda Dume", "VICHINDA"),
+        ("Vichinda Jike", "VICHINDA"),
+    ],
+)
+def test_search_tags_maps_sex_specific_categories_to_registry_category(
+    monkeypatch, local_category, registry_category
+):
+    capture = {}
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_async_client(
+            response=_response(200, path="/api/integration/tags", json={"items": [], "next_cursor": None}),
+            capture=capture,
+        ),
+    )
+
+    _run(_client().search_tags("Jane", category=local_category))
+
+    assert capture["kwargs"]["params"]["category"] == registry_category
+
+
 def test_post_status_409_raises_conflict_with_current_status(monkeypatch):
     monkeypatch.setattr(
         httpx,

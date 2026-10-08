@@ -109,8 +109,20 @@ function BreedingAnalyticsCard({ speciesRate }) {
             <p className="text-2xl font-bold text-slate-800">{speciesRate.breeding_males}</p>
           </div>
           <div className="p-3 rounded-lg bg-amber-50">
-            <p className="text-xs text-amber-700">Births</p>
-            <p className="text-2xl font-bold text-amber-800">{speciesRate.births}</p>
+            <div className="flex items-baseline justify-between">
+              <p className="text-xs text-amber-700">Births</p>
+              <p className="text-2xl font-bold text-amber-800">{speciesRate.births}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-amber-200/80">
+              <div>
+                <p className="text-[11px] text-amber-700/80">Male (Dume)</p>
+                <p className="text-sm font-semibold text-amber-900">{speciesRate.births_male || 0}</p>
+              </div>
+              <div className="border-l border-amber-200/80 pl-2">
+                <p className="text-[11px] text-amber-700/80">Female (Jike)</p>
+                <p className="text-sm font-semibold text-amber-900">{speciesRate.births_female || 0}</p>
+              </div>
+            </div>
           </div>
           <div className="p-3 rounded-lg bg-blue-50">
             <p className="text-xs text-blue-700">Calving Rate</p>

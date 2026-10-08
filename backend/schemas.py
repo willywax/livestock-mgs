@@ -160,6 +160,9 @@ class EventUpdate(BaseModel):
     gift_party_name: Optional[str] = None
     gift_party_phone: Optional[str] = None
     gift_reason: Optional[str] = None
+    # Set when animal_tags (death/sold) or mother_tag (birth) was (re)picked via
+    # RegistryTagPicker during an edit — see EventCreate.registry_previous_status.
+    registry_previous_status: Optional[str] = None
 
 class EventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -342,6 +345,8 @@ class SpeciesRates(BaseModel):
     breeding_males: int
     breeding_females_trend: int
     births: int
+    births_male: int
+    births_female: int
     deaths: int
     weaned: int
     sold: int

@@ -424,3 +424,52 @@ def test_retry_outbox_row_returns_none_when_missing():
 
     assert result is None
     session.commit.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# upsert_outbox_row
+# ---------------------------------------------------------------------------
+
+def test_upsert_outbox_row_inserts_when_none_exists():
+    new_row = _make_row(tag_id="TAG-NEW", source_event_id="death:1")
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = None
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=execute_result)
+    session.add = MagicMock()
+
+    result = _run(registry_sync.upsert_outbox_row(session, new_row))
+
+    assert result is new_row
+    session.add.assert_called_once_with(new_row)
+
+
+def test_upsert_outbox_row_updates_existing_and_requeues():
+    existing = _make_row(
+        tag_id="TAG-OLD", source_event_id="death:1",
+        state=RegistrySyncState.CONFLICT, attempts=3, last_error="conflict: current_status=SOLD",
+        sent_at=datetime.now(timezone.utc),
+    )
+    corrected = _make_row(
+        tag_id="TAG-CORRECTED", source_event_id="death:1",
+        intended_status="DECEASED", previous_status="ACTIVE", payload={"registry_event_type": "DEATH"},
+    )
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = existing
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=execute_result)
+    session.add = MagicMock()
+
+    result = _run(registry_sync.upsert_outbox_row(session, corrected))
+
+    assert result is existing  # updated in place, not replaced
+    assert existing.tag_id == "TAG-CORRECTED"
+    assert existing.intended_status == "DECEASED"
+    assert existing.previous_status == "ACTIVE"
+    assert existing.state == RegistrySyncState.PENDING
+    assert existing.attempts == 0
+    assert existing.last_error is None
+    assert existing.sent_at is None
+    session.add.assert_not_called()

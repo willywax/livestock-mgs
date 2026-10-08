@@ -1387,8 +1387,31 @@ async def update_event(
         )
         await apply_event_to_stock(db, location_id, new_event_data)
 
+    # ADDED: link/correct a Registry tag on this event (e.g. via RegistryTagPicker during
+    # edit). Upserts rather than always inserting, since a row may already exist from
+    # when this event was first created.
+    outbox_row = None
+    if data.registry_previous_status:
+        built = registry_sync.build_outbox_row_for_event(
+            event_type=event.event_type,
+            event_id=event.id,
+            log_date=event.daily_log.log_date,
+            note=event.notes,
+            animal_tags=event.animal_tags,
+            mother_tag=event.mother_tag,
+            registry_previous_status=data.registry_previous_status,
+        )
+        if built is not None:
+            outbox_row = await registry_sync.upsert_outbox_row(db, built)
+
     await db.commit()
     await db.refresh(event)
+
+    registry_sync_warning = None
+    if outbox_row is not None:
+        await registry_sync.enqueue_and_send(db, outbox_row)
+        if outbox_row.state == RegistrySyncState.CONFLICT:
+            registry_sync_warning = registry_sync.conflict_warning_message(outbox_row)
 
     return EventResponse(
         id=event.id,
@@ -1417,6 +1440,7 @@ async def update_event(
         gift_party_name=event.gift_party_name,
         gift_party_phone=event.gift_party_phone,
         gift_reason=event.gift_reason,
+        registry_sync_warning=registry_sync_warning,
     )
 
 @api_router.delete("/events/{event_id}")
@@ -2043,7 +2067,16 @@ async def get_analytics_report(
         total_stock = result.scalar() or 0
         
         # Count events for this species
-        births = sum(e.count for e in events if e.species == sp and e.event_type == EventType.BIRTH)
+        birth_events = [e for e in events if e.species == sp and e.event_type == EventType.BIRTH]
+        births = sum(e.count for e in birth_events)
+        births_male = sum(
+            e.count for e in birth_events
+            if e.category and e.category.name_sw.strip().lower().endswith(" dume")
+        )
+        births_female = sum(
+            e.count for e in birth_events
+            if e.category and e.category.name_sw.strip().lower().endswith(" jike")
+        )
         deaths = sum(e.count for e in events if e.species == sp and e.event_type == EventType.DEATH)
         weaned = sum(e.count for e in events if e.species == sp and e.event_type == EventType.WEANING)
         sold = sum(e.count for e in events if e.species == sp and e.event_type == EventType.SOLD)
@@ -2090,6 +2123,8 @@ async def get_analytics_report(
             breeding_males=breeding_males,
             breeding_females_trend=breeding_females_trend,
             births=births,
+            births_male=births_male,
+            births_female=births_female,
             deaths=deaths,
             weaned=weaned,
             sold=sold,

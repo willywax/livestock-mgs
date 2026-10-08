@@ -135,6 +135,8 @@ class TestAnalytics:
             assert "total_stock" in rate
             assert "breeding_females" in rate
             assert "births" in rate
+            assert "births_male" in rate
+            assert "births_female" in rate
             assert "deaths" in rate
             assert "sold" in rate
             assert "bought" in rate

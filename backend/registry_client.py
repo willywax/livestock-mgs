@@ -30,6 +30,25 @@ SOURCE_SYSTEM = "ShambaManager"
 REQUEST_TIMEOUT_SECONDS = 10.0
 TOKEN_REFRESH_MARGIN_SECONDS = 300  # refresh ~5 min before expiry
 
+# ShambaManager records sex-specific livestock categories, while the Registry groups
+# these young-animal categories under a single code. Keep this translation at the
+# Registry boundary so the application's own category names remain unchanged.
+REGISTRY_CATEGORY_ALIASES = {
+    "ACHISHWA DUME": "ACHISHWA",
+    "ACHISHWA JIKE": "ACHISHWA",
+    "NDAMA DUME": "NDAMA",
+    "NDAMA JIKE": "NDAMA",
+    "VICHINDA DUME": "VICHINDA",
+    "VICHINDA JIKE": "VICHINDA",
+}
+
+
+def _registry_category(category: Optional[str]) -> Optional[str]:
+    if not category:
+        return category
+    normalized = category.strip().upper()
+    return REGISTRY_CATEGORY_ALIASES.get(normalized, normalized)
+
 
 class RegistryError(Exception):
     """Base class for registry_client errors."""
@@ -188,7 +207,7 @@ class RegistryClient:
         """
         species = species.upper() if species else species
         location = location.upper() if location else location
-        category = category.upper() if category else category
+        category = _registry_category(category)
         params = {
             k: v
             for k, v in {
