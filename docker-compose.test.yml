@@ -1,0 +1,23 @@
+# Throwaway PostgreSQL for local testing ONLY. Never point it at real data.
+# Bound to loopback, trust auth, no password, data is discarded with `down -v`.
+#
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5433/shamba_test  (set in your shell, not in a file)
+#   docker compose -f docker-compose.test.yml down -v
+services:
+  test-db:
+    image: postgres:16-alpine
+    container_name: shamba-test-db
+    environment:
+      POSTGRES_DB: shamba_test
+      POSTGRES_USER: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shamba_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
