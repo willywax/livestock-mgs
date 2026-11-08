@@ -27,6 +27,7 @@ Use this after CLAUDE.md; inspect referenced source before edits. Paths are repo
 
 | Change reproduction / animal profile (cycles, bulls, BCS, photos, notes, timeline, analytics) | backend/models.py (REPRODUCTION block at end); backend/schemas.py (same heading at end); backend/server.py (block above `include_router`); backend/tests/test_reproduction.py | New routes must stay above `app.include_router(api_router)`; photos need `GCS_BUCKET_NAME` + google-cloud-storage (lazy import) |
 | Change the reproduction dashboard / dialogs | frontend/src/pages/Reproduction.jsx; frontend/src/components/ReproductionDialogs.jsx; frontend/src/lib/api.js (reproduction block at end) | Species constants (gestation, terms, interval thresholds) keyed cattle/sheep/goat; no frontend tests, verify with `npm run build` |
+| Change the animal profile page (photos, timeline, tabs) | frontend/src/pages/AnimalDetail.jsx; frontend/src/pages/Animals.jsx (row navigation, `?edit=`/`?transfer=` handoff); frontend/src/lib/api.js (animal profile block at end) | Photos need `GCS_BUCKET_NAME`; reuses ReproductionDialogs.jsx |
 
 ## Cross-cutting cautions
 High: event creation and individual Animal registration are separate flows; a birth log does not create a calf identity (`backend/server.py:970`, `:3089`).

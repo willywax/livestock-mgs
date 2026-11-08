@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   getAnimals, createAnimal, updateAnimal, transferAnimal,
@@ -87,10 +88,44 @@ function Animals() {
   const [transferring, setTransferring] = useState(false);
 
   const { isAdmin, isDataEntry } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Set when Edit/Transfer was opened from an animal profile (?edit=ID / ?transfer=ID):
+  // after the dialog closes (saved or cancelled) we go back to that profile.
+  const [returnTo, setReturnTo] = useState(null);
 
   useEffect(function () {
     loadData();
   }, []);
+
+  useEffect(function () {
+    if (loading) return;
+    const editId = searchParams.get('edit');
+    const transferId = searchParams.get('transfer');
+    const id = parseInt(editId || transferId);
+    if (!id) return;
+    setSearchParams({}, { replace: true });
+    const animal = animals.find(function (a) { return a.id === id; });
+    if (!animal) {
+      toast.error('Animal not found');
+      return;
+    }
+    setReturnTo(id);
+    if (editId) {
+      handleOpenAddDialog(animal);
+    } else {
+      setSelectedAnimal(animal);
+      handleOpenTransfer();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, animals, searchParams]);
+
+  useEffect(function () {
+    if (returnTo && !addDialogOpen && !transferDialogOpen) {
+      navigate('/animals/' + returnTo);
+      setReturnTo(null);
+    }
+  }, [returnTo, addDialogOpen, transferDialogOpen, navigate]);
 
   async function loadData() {
     // Load locations + categories independently — these are needed by the form
@@ -127,8 +162,7 @@ function Animals() {
   const formCategories = categories.filter(function (c) { return c.species === formData.species; });
 
   function handleRowClick(animal) {
-    setSelectedAnimal(animal);
-    setSheetOpen(true);
+    navigate('/animals/' + animal.id);
   }
 
   function handleOpenAddDialog(animal) {
