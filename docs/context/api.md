@@ -8,6 +8,8 @@ Source-only snapshot: 2026-10-08; deployment and database state were not inspect
 
 Auth describes backend enforcement, not frontend visibility. Shamba uses phone/password JWT; Registry uses name/PIN JWT. OIDC is a separate service identity. Request names omit injected DB/auth arguments; untyped responses are labeled explicitly.
 
+> **Auth hardening 2026-11-08 (branch `ft/r1-auth-hardening`):** every business endpoint now requires a valid JWT. 13 previously open GET routes now use `require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)`: `/api/locations`, `/api/locations/{location_id}`, `/api/categories`, `/api/diseases`, `/api/opening-balances`, `/api/daily-logs`, `/api/daily-logs/{log_id}`, `/api/stock-levels`, `/api/dashboard`, `/api/reports/daily`, `/api/reports/range`, `/api/reports/analytics`, `/api/reports/detailed`. Still public by design: `GET /api/` (health), `POST /api/auth/login`, and the three CSV template downloads (`/api/templates/locations`, `/api/templates/opening-balances`, `/api/templates/animals`; the browser downloads them with a plain link that cannot send a JWT). Two of the templates read location and category names from the DB (KNOWN_ISSUES K21). A missing Authorization header returns 403 (HTTPBearer); an invalid or expired token returns 401. Line numbers in the Source column predate this change.
+
 | Method | Path | Auth | Purpose / handler | Request -> response schema | Caller | Source |
 |---|---|---|---|---|---|---|
 | GET | `/api/` | Public | root | none -> dict (no model) | Health/manual clients; no in-repo service caller | `backend/server.py:166` |
@@ -17,37 +19,37 @@ Auth describes backend enforcement, not frontend visibility. Shamba uses phone/p
 | POST | `/api/users` | JWT ADMIN | create user | UserCreate -> UserResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:202` |
 | PUT | `/api/users/{user_id}` | JWT ADMIN | update user | UserUpdate -> UserResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:224` |
 | DELETE | `/api/users/{user_id}` | JWT ADMIN | delete user | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:247` |
-| GET | `/api/locations` | Public | list locations | path/query only -> List[LocationResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:266` |
-| GET | `/api/locations/{location_id}` | Public | get location | path/query only -> LocationResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:272` |
+| GET | `/api/locations` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list locations | path/query only -> List[LocationResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:266` |
+| GET | `/api/locations/{location_id}` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get location | path/query only -> LocationResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:272` |
 | POST | `/api/locations` | JWT ADMIN | create location | LocationCreate -> LocationResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:280` |
 | PUT | `/api/locations/{location_id}` | JWT ADMIN | update location | LocationUpdate -> LocationResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:296` |
 | GET | `/api/templates/locations` | Public | download locations template | none -> CSV StreamingResponse (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:321` |
 | GET | `/api/templates/opening-balances` | Public | download opening balances template | path/query only -> CSV StreamingResponse (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:338` |
 | POST | `/api/import/locations` | JWT ADMIN | import locations | UploadFile -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:384` |
 | POST | `/api/import/opening-balances` | JWT ADMIN | import opening balances | UploadFile -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:439` |
-| GET | `/api/categories` | Public | list categories | path/query only -> List[CategoryResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:563` |
-| GET | `/api/diseases` | Public | list diseases | path/query only -> List[DiseaseResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:578` |
+| GET | `/api/categories` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list categories | path/query only -> List[CategoryResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:563` |
+| GET | `/api/diseases` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list diseases | path/query only -> List[DiseaseResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:578` |
 | POST | `/api/diseases` | JWT ADMIN (inline) | create disease | DiseaseCreate -> DiseaseResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:593` |
 | DELETE | `/api/diseases/{disease_id}` | JWT ADMIN (inline) | delete disease | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:618` |
 | PUT | `/api/diseases/{disease_id}` | JWT ADMIN (inline) | update disease | DiseaseCreate -> DiseaseResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:637` |
-| GET | `/api/opening-balances` | Public | list opening balances | path/query only -> List[OpeningBalanceResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:662` |
+| GET | `/api/opening-balances` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list opening balances | path/query only -> List[OpeningBalanceResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:662` |
 | POST | `/api/opening-balances` | JWT ADMIN | create opening balance | OpeningBalanceCreate -> OpeningBalanceResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:695` |
 | PUT | `/api/opening-balances/{balance_id}` | JWT ADMIN | update opening balance | OpeningBalanceUpdate -> OpeningBalanceResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:742` |
-| GET | `/api/daily-logs` | Public | list daily logs | path/query only -> List[DailyLogResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:773` |
-| GET | `/api/daily-logs/{log_id}` | Public | get daily log | path/query only -> DailyLogResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:829` |
+| GET | `/api/daily-logs` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list daily logs | path/query only -> List[DailyLogResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:773` |
+| GET | `/api/daily-logs/{log_id}` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get daily log | path/query only -> DailyLogResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:829` |
 | POST | `/api/daily-logs` | JWT ADMIN,DATA_ENTRY | create daily log | DailyLogCreate -> DailyLogResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:927` |
 | POST | `/api/daily-logs/{log_id}/events` | JWT ADMIN | add event to daily log | EventCreate -> EventResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1071` |
 | POST | `/api/daily-logs/{log_id}/lock` | JWT ADMIN,VIEWER | lock daily log | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1179` |
 | PUT | `/api/daily-logs/{log_id}` | JWT ADMIN | update daily log | DailyLogUpdate -> DailyLogResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1197` |
 | PUT | `/api/events/{event_id}` | JWT ADMIN,DATA_ENTRY | update event | EventUpdate -> EventResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1266` |
 | DELETE | `/api/events/{event_id}` | JWT ADMIN | delete event | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1446` |
-| GET | `/api/stock-levels` | Public | list stock levels | path/query only -> List[StockLevelResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1495` |
+| GET | `/api/stock-levels` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list stock levels | path/query only -> List[StockLevelResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1495` |
 | POST | `/api/stock-levels/recompute` | JWT ADMIN | recompute stock levels endpoint | path/query only -> dict (no model) | Admin/manual; no frontend wrapper found | `backend/server.py:1528` |
-| GET | `/api/dashboard` | Public | get dashboard | path/query only -> DashboardResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1540` |
-| GET | `/api/reports/daily` | Public | get daily report | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1882` |
-| GET | `/api/reports/range` | Public | get range report | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1935` |
-| GET | `/api/reports/analytics` | Public | get analytics report | path/query only -> AnalyticsResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1990` |
-| GET | `/api/reports/detailed` | Public | get detailed report | path/query only -> DetailedReportResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:2508` |
+| GET | `/api/dashboard` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get dashboard | path/query only -> DashboardResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1540` |
+| GET | `/api/reports/daily` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get daily report | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1882` |
+| GET | `/api/reports/range` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get range report | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1935` |
+| GET | `/api/reports/analytics` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get analytics report | path/query only -> AnalyticsResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1990` |
+| GET | `/api/reports/detailed` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get detailed report | path/query only -> DetailedReportResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:2508` |
 | GET | `/api/templates/animals` | Public | download animals template | path/query only -> CSV StreamingResponse (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:2992` |
 | GET | `/api/animals` | JWT active user | list animals | path/query only -> List[AnimalResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3039` |
 | POST | `/api/animals` | JWT ADMIN,DATA_ENTRY | create animal | AnimalCreate -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3071` |
@@ -77,5 +79,5 @@ Auth describes backend enforcement, not frontend visibility. Shamba uses phone/p
 
 - Pydantic contracts: `backend/schemas.py:1`; enum values: `backend/models.py:9`. Request models with optional fields do not necessarily support clearing fields; handlers commonly ignore None.
 - Active-user verification and role factory: `backend/auth.py:37`, `backend/auth.py:67`.
-- High: unauthenticated business reads include daily logs, opening balances, stock and reports (`backend/server.py:773`, `backend/server.py:1990`). Browser ProtectedRoute (`frontend/src/App.js:24`) does not secure these routes.
+- Resolved 2026-11-08: unauthenticated business reads were closed (see the note at the top). Remaining public routes: health, login, three CSV templates.
 - Low: generated API/client comments can lag actual roles: add-event is ADMIN, update-event allows ADMIN/DATA_ENTRY, lock allows ADMIN/VIEWER (`backend/server.py:1071`, `backend/server.py:1266`, `backend/server.py:1179`).

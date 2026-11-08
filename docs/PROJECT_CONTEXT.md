@@ -11,7 +11,7 @@ Line numbers quoted from the repo analysis drift quickly; treat them as hints an
 - Users (roles): `admin`, `data_entry` (office staff entering logs), `viewer` (read-only). Login is by phone number + password (JWT).
 - Status: actively developed, in use (Unverified: the repo's deploy guide names live domains, but no deployment was inspected).
 - Last updated: 2026-11-08.
-- Branch/commit: working branch `chore/remove-registry`, created from `chore/claude-setup`, which was created from `main` at `9b72555` ("Support registry tag edits and birth counts by sex"); `main` was 4 commits ahead of `origin/main`. Local branches `ft-edit-event` (same commit as main), `ft-schedule` and `new-ft` appear stale/merged (Unverified). The setup commits (untracked env/DB/log files, Claude config, docs) sit on `chore/claude-setup`; the Registry removal sits on `chore/remove-registry`; nothing is pushed or merged.
+- Branch/commit: working branch `ft/r1-auth-hardening`, stacked on `chore/remove-registry`, stacked on `chore/claude-setup`, which was created from `main` at `9b72555` ("Support registry tag edits and birth counts by sex"); `main` was 4 commits ahead of `origin/main`. Local branches `ft-edit-event` (same commit as main), `ft-schedule` and `new-ft` appear stale/merged (Unverified). The setup commits (untracked env/DB/log files, Claude config, docs) sit on `chore/claude-setup`; the Registry removal sits on `chore/remove-registry`; the auth hardening sits on `ft/r1-auth-hardening`; nothing is pushed or merged. Planned merge order: chore/claude-setup, chore/remove-registry, ft/r1-auth-hardening, then main.
 - No application code was changed by the setup work.
 
 ## 3. Tech stack
@@ -85,7 +85,7 @@ Omitted: `.venv`, `node_modules`, `frontend/build`, caches, `.git`. Also present
 - JWT bearer (HS256, 24h) from `/api/auth/login` (phone + password). Backend helper `require_roles(...)` in `backend/auth.py`; roles are `admin`, `data_entry`, `viewer`.
 - Typical split: admins manage users/locations/categories/opening balances/settings/health config and updates; admin + data_entry create logs/events/animals; viewers read. Not every route follows this; the per-route truth is in `docs/context/api.md`.
 - Frontend route guards (in `App.js`/`Layout.jsx`) are UI-only; backend enforcement is what counts.
-- Known access-control gaps exist: see `docs/KNOWN_ISSUES.md` and `docs/context/api.md` (per-route auth).
+- Every business endpoint requires a JWT; public: health, login, three CSV templates (`docs/KNOWN_ISSUES.md` K21). Per-route auth: `docs/context/api.md`.
 
 **Frontend routes** (`frontend/src/App.js`): `/login`, `/`, `/locations`, `/locations/:id`, `/animals`, `/farm-health`, `/daily-logs`, `/daily-logs/new`, `/daily-logs/:id`, `/opening-balances`, `/reports`, `/admin/users`, `/settings`.
 
@@ -171,18 +171,17 @@ Everything below is in the repo on branch `chore/claude-setup` (not yet merged).
 
 ## 10. Current work
 Recent commits on `main` (newest first): `9b72555` Support registry tag edits and birth counts by sex; `114b280`, `4baae11` changes to tags; `9c52010` view extra details in edit logs; `56f3558` logs and vaccines; `f1f227e` animals. The Registry work in those commits was removed on branch `chore/remove-registry`. Most-changed files before that: `backend/server.py`, `backend/schemas.py`, `frontend/src/pages/NewDailyLog.jsx`, `DailyLogDetail.jsx`, `frontend/src/lib/api.js`.
-In progress: branch `chore/remove-registry` (from `chore/claude-setup`) removes the Registry integration at application level (backend, frontend, tests, docs/config); nothing pushed or merged. Next intended work, approved by the owner in principle: close unauthenticated read routes (ROADMAP R1) on a separate branch. No other open tasks identified (Unverified: no tracker).
-Known issues: `docs/KNOWN_ISSUES.md` (open: K01, K02, K07, K11, K14-K20; K03-K06, K08-K10, K12-K13 resolved by the removal). Headline themes only: credential hygiene, access control on some reads, concurrency, no automated backend tests, and inert legacy Registry data to clean up by the owner. Credentials that were once committed must be rotated by the owner.
+In progress: three stacked, unmerged branches (see section 2). `ft/r1-auth-hardening` (latest) put JWT auth on 13 previously open GET routes; health, login and three CSV template downloads stay public (K21). Next candidates: ROADMAP R2 (fail-closed secrets, owner rotates credentials), R4 (backend tests). No other open tasks identified (Unverified: no tracker).
+Known issues: `docs/KNOWN_ISSUES.md` (open: K01, K07, K11, K14-K21; K02 closed on ft/r1-auth-hardening; K03-K06, K08-K10, K12-K13 resolved by the removal). Headline themes only: credential hygiene, public CSV templates (K21), concurrency, no automated backend tests, and inert legacy Registry data to clean up by the owner. Credentials that were once committed must be rotated by the owner.
 
 ## 11. Roadmap
 Full table: `docs/ROADMAP.md` (sizes are estimates, Unverified). Dairy is out of scope (owner decision).
-1. R1 Close unauthenticated reads with explicit roles + tests — medium (owner approved).
-2. R2 Fail-closed secret/bootstrap handling; owner rotates credentials — medium.
-3. R4 Backend test suite (none exists): verify the Docker test DB, add mocked and Postgres-backed tests — medium.
-4. R6 Atomic stock updates + positive-count validation — medium.
-5. R8 Align deployment config; owner removes obsolete Registry env vars/scheduler — small.
-6. R10 Frontend tests + CI (needs approval) — medium.
-7. R11 Chemical rotation and notifications — large.
+1. R2 Fail-closed secret/bootstrap handling; owner rotates credentials — medium.
+2. R4 Backend test suite (none exists): verify the Docker test DB, add mocked and Postgres-backed tests — medium.
+3. R6 Atomic stock updates + positive-count validation — medium.
+4. R8 Align deployment config; owner removes obsolete Registry env vars/scheduler — small.
+5. R10 Frontend tests + CI (needs approval) — medium.
+6. R11 Chemical rotation and notifications — large.
 
 ## 12. Constraints
 Never, or only with explicit owner approval:

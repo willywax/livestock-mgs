@@ -110,7 +110,7 @@ No Shamba birth_cohort/production_stage column or assignment exists. Category tr
 
 ## Quality/risk evidence
 - Critical (conditional exploitability): JWT_SECRET has a literal fallback and empty user tables get a fixed default admin. backend/.env and frontend/.env are tracked (git index; values excluded). Require explicit secret/bootstrap configuration and review exposure (`backend/auth.py:14`, `backend/seed_data.py:62`, `backend/server.py:139`).
-- High: many business GETs have no auth; reports can expose event/contact details. CORS/frontend gating is not authorization (`backend/server.py:773`, `:1882`, `:1990`; api.md lists all).
+- Resolved 2026-11-08: the open business GETs now require a JWT (see api.md). CORS/frontend gating is still not authorization; backend dependencies are.
 - High: stock read-modify-write has no lock/atomic increment; concurrent requests can lose adjustments (`backend/server.py:2789`, `:2801`). Negative/zero event counts are not constrained in EventCreate/EventUpdate (`backend/schemas.py:109`, `:142`).
 - Medium: genuine query-per-row in upcoming/list health category resolution; bulk import also queries for each duplicate. Batch these after measuring (`backend/server.py:3735`, `:3785`, `:3200`).
 - Medium: async ORM usage is broadly consistent with awaited I/O and selectinload. no synchronous Session.query use in Shamba's request path was found (`backend/registry_client.py:151`, `backend/registry_auth.py:55`).
