@@ -244,6 +244,14 @@ New enums: `ServiceType {natural, ai}`, `PDResult {pregnant, open, repeat}`, `Re
 
 Rollback for this change (manual, only if needed and after checking the tables are empty): `DROP TABLE reproductive_cycles, bull_assignments, bcs_records, animal_photos, animal_notes;` then `DROP TYPE servicetype, pdresult, calvingoutcome, reproductivecyclestatus, notetype;`. Do NOT drop `abortionstage` or `animalsex`: existing tables use them.
 
+## animal_location_history / AnimalLocationHistory (added 2026-11-08)
+Append-only log of animal moves; written by the event-to-register sync on TRANSFER events (decision 0009). Created by `create_all` (new table, no DDL line).
+- `id: Integer ! [PK; IX]`; `animal_id: Integer ! [FK animals.id; IX]`; `from_location_id: Integer ? [FK locations.id]` (null = first recorded location).
+- `to_location_id: Integer ! [FK locations.id]`; `moved_date: Date !`; `event_id: Integer ? [FK events.id; IX]` (null for manual moves, or when the source event was deleted).
+- `notes: Text ?`; `created_by: Integer ? [FK users.id]`; `created_at: DateTime(timezone=True) ? [default=UTC now]`.
+- ORM relationships: `animal`, `from_location`, `to_location`.
+- Rollback (manual, only if the table is empty or its data is not needed): `DROP TABLE animal_location_history;`
+
 ## Schema safety and future non-additive changes
 
 - High: startup uses create_all plus a small set of nullable ALTER additions; it does not evolve existing enum types, nullability or constraints (`backend/server.py:98`, `backend/database.py:55`). Alembic is installed but no migration directory/config is present.

@@ -14,6 +14,7 @@ import csv
 import io
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime, date, timezone, timedelta
@@ -27,6 +28,7 @@ from models import (
     VaccineType,
     BullAssignment, ReproductiveCycle, BCSRecord, AnimalPhoto, AnimalNote,
     ReproductiveCycleStatus, CalvingOutcome, PDResult,
+    AnimalLocationHistory,
 )
 from schemas import (
     UserLogin, UserCreate, UserUpdate, UserResponse, TokenResponse,
@@ -53,6 +55,7 @@ from schemas import (
     AnimalPhotoCreate, AnimalPhotoUpdate, AnimalPhotoResponse,
     AnimalNoteCreate, AnimalNoteUpdate, AnimalNoteResponse,
     TimelineItem, LocationReproductionMetrics, ReproductionAnalyticsResponse,
+    AnimalLocationHistoryResponse, ReconciliationRow,
 )
 from auth import (
     verify_password, get_password_hash, create_access_token,
@@ -1064,6 +1067,262 @@ async def create_daily_log(
         events=event_responses
     )
 
+# ==================== ANIMAL REGISTER SYNC (best-effort) ====================
+# Runs AFTER the stock commit. Failures here never roll back stock; they are
+# logged and surfaced as sync_warnings on the response. Helpers take plain
+# snapshots/values so a rollback (which expires ORM objects) cannot break them.
+_FEMALE_CATEGORIES = {"koo", "mitamba", "ndama jike", "achishwa jike", "vichinda jike"}
+_MALE_CATEGORIES = {"ndama dume", "achishwa dume", "maksai", "dume mbegu", "dume wadogo", "vichinda dume"}
+_SYNC_FAILED_MSG = "Animal register could not be updated automatically (see server logs); stock was saved."
+
+
+def _split_tags(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    seen, out = set(), []
+    for part in raw.split(","):
+        tag = part.strip()
+        if tag and tag not in seen:
+            seen.add(tag)
+            out.append(tag)
+    return out
+
+
+def _infer_sex(category: Optional[Category]) -> Optional[AnimalSex]:
+    """Sex implied by the seeded category name (None when it cannot be told)."""
+    if category is None:
+        return None
+    name = (category.name_sw or "").strip().lower()
+    if name in _FEMALE_CATEGORIES:
+        return AnimalSex.FEMALE
+    if name in _MALE_CATEGORIES:
+        return AnimalSex.MALE
+    return None
+
+
+def _event_snapshot(event: Event, location_id: int, log_date: date) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=event.id, event_type=event.event_type, species=event.species,
+        category_id=event.category_id, from_category_id=event.from_category_id,
+        to_category_id=event.to_category_id, from_location_id=event.from_location_id,
+        to_location_id=event.to_location_id, animal_tags=event.animal_tags,
+        offspring_tags=event.offspring_tags, location_id=location_id, log_date=log_date,
+    )
+
+
+async def _find_animal(db: AsyncSession, tag: str, species, prefer_location: Optional[int] = None,
+                       prefer_status: Optional[AnimalStatus] = None) -> Optional[Animal]:
+    rows = (await db.execute(
+        select(Animal).where(and_(Animal.tag_number == tag, Animal.species == species)).order_by(Animal.id)
+    )).scalars().all()
+    if not rows:
+        return None
+
+    def rank(a: Animal):
+        return (
+            0 if prefer_status is not None and a.status == prefer_status else 1,
+            0 if prefer_location is not None and a.location_id == prefer_location else 1,
+            0 if a.status == AnimalStatus.ACTIVE else 1,
+            a.id,
+        )
+    return sorted(rows, key=rank)[0]
+
+
+def _set_status(animal: Animal, status: AnimalStatus) -> None:
+    if animal.status != status:
+        animal.status = status
+        animal.status_changed_at = datetime.now(timezone.utc)
+
+
+async def _restore_after_rollback(db: AsyncSession, *objs) -> None:
+    """rollback() expires ORM objects; reload the ones the caller still uses."""
+    for obj in objs:
+        try:
+            await db.refresh(obj)
+        except Exception:
+            logger.warning("Could not refresh %r after register-sync rollback", obj, exc_info=True)
+
+
+async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: DailyLog,
+                                   current_user: User) -> List[str]:
+    """Apply an event to the individual animal register. Never raises; returns warnings."""
+    warnings: List[str] = []
+    try:
+        et = event.event_type
+        species = event.species
+        event_id = event.id
+        category_id = event.category_id
+        to_location_id = event.to_location_id
+        to_category_id = event.to_category_id
+        log_location_id = daily_log.location_id
+        log_date = daily_log.log_date
+        user_id = current_user.id
+        tags = _split_tags(event.animal_tags)
+        offspring = _split_tags(event.offspring_tags) if et == EventType.BIRTH else []
+        if not tags and not offspring:
+            return warnings
+
+        def warn(msg: str) -> None:
+            logger.warning("Animal register sync (event %s): %s", event_id, msg)
+            warnings.append(msg)
+
+        async def create_animal_row(tag: str, acquisition: AnimalAcquisitionType) -> Optional[Animal]:
+            if not category_id:
+                warn(f"Tag {tag}: no category on event, animal not created")
+                return None
+            sex = _infer_sex(await db.get(Category, category_id))
+            if sex is None:
+                warn(f"Tag {tag}: sex cannot be inferred from category, animal not created")
+                return None
+            animal = Animal(
+                tag_number=tag, species=species, category_id=category_id,
+                location_id=log_location_id, sex=sex, status=AnimalStatus.ACTIVE,
+                acquisition_type=acquisition, acquisition_date=log_date, created_by=user_id,
+            )
+            db.add(animal)
+            await db.flush()
+            return animal
+
+        for tag in tags:
+            animal = await _find_animal(db, tag, species, prefer_location=log_location_id)
+            if animal is None:
+                if et in (EventType.BOUGHT, EventType.GIFT_IN):
+                    await create_animal_row(tag, AnimalAcquisitionType.BOUGHT)
+                else:
+                    warn(f"Tag {tag}: not found in the animal register, skipped")
+                continue
+
+            if et in (EventType.BOUGHT, EventType.GIFT_IN):
+                if animal.status in (AnimalStatus.DEAD, AnimalStatus.SOLD):
+                    warn(f"Tag {tag}: register shows it as {animal.status.value}; not reactivated")
+                else:
+                    _set_status(animal, AnimalStatus.ACTIVE)
+            elif et == EventType.DEATH:
+                _set_status(animal, AnimalStatus.DEAD)
+            elif et in (EventType.SOLD, EventType.GIFT_OUT):
+                _set_status(animal, AnimalStatus.SOLD)
+            elif et == EventType.MISSING:
+                _set_status(animal, AnimalStatus.MISSING)
+            elif et in (EventType.TRANSFER, EventType.CATEGORY_CHANGE, EventType.WEANING):
+                if animal.status in (AnimalStatus.DEAD, AnimalStatus.SOLD):
+                    warn(f"Tag {tag}: register shows it as {animal.status.value}; {et.value} not applied")
+                    continue
+                _set_status(animal, AnimalStatus.ACTIVE)
+                if et == EventType.TRANSFER:
+                    if not to_location_id:
+                        warn(f"Tag {tag}: transfer has no destination, location unchanged")
+                    elif animal.location_id != to_location_id:
+                        clash = (await db.execute(select(Animal.id).where(and_(
+                            Animal.tag_number == tag, Animal.species == species,
+                            Animal.location_id == to_location_id, Animal.id != animal.id,
+                        )))).first()
+                        if clash:
+                            warn(f"Tag {tag}: same tag already registered at the destination, location unchanged")
+                        else:
+                            db.add(AnimalLocationHistory(
+                                animal_id=animal.id, from_location_id=animal.location_id,
+                                to_location_id=to_location_id, moved_date=log_date,
+                                event_id=event_id, created_by=user_id,
+                            ))
+                            animal.location_id = to_location_id
+                elif to_category_id:
+                    animal.category_id = to_category_id
+            # BIRTH / ABORTION: nothing to change on the mother's record
+
+        for tag in offspring:
+            existing = await _find_animal(db, tag, species)
+            if existing is not None:
+                warn(f"Offspring tag {tag}: already in the animal register, skipped")
+                continue
+            await create_animal_row(tag, AnimalAcquisitionType.BORN)
+
+        await db.commit()
+    except Exception:
+        logger.exception("Animal register sync failed for event %s", getattr(event, "id", None))
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("Rollback after animal register sync failure also failed")
+        await _restore_after_rollback(db, event, daily_log)
+        warnings.append(_SYNC_FAILED_MSG)
+    return warnings
+
+
+_REVERSIBLE_STATUS = {
+    EventType.DEATH: AnimalStatus.DEAD,
+    EventType.SOLD: AnimalStatus.SOLD,
+    EventType.GIFT_OUT: AnimalStatus.SOLD,
+    EventType.MISSING: AnimalStatus.MISSING,
+}
+
+
+async def _reverse_animal_sync(db: AsyncSession, snap: SimpleNamespace, deleting: bool = False,
+                               restore: tuple = ()) -> List[str]:
+    """Undo an event's register effects (snapshot of the OLD event). Never raises; returns warnings.
+
+    Animals auto-created by bought/gift_in/birth events are never deleted (they may already
+    have photos, notes or history); a warning is returned when the event is being deleted.
+    """
+    warnings: List[str] = []
+    try:
+        et = snap.event_type
+        tags = _split_tags(snap.animal_tags)
+
+        def warn(msg: str) -> None:
+            logger.warning("Animal register reverse (event %s): %s", snap.id, msg)
+            warnings.append(msg)
+
+        if et == EventType.TRANSFER:
+            rows = (await db.execute(
+                select(AnimalLocationHistory).where(AnimalLocationHistory.event_id == snap.id)
+            )).scalars().all()
+            for row in rows:
+                animal = await db.get(Animal, row.animal_id)
+                if animal is not None and animal.location_id == row.to_location_id and row.from_location_id:
+                    clash = (await db.execute(select(Animal.id).where(and_(
+                        Animal.tag_number == animal.tag_number, Animal.species == animal.species,
+                        Animal.location_id == row.from_location_id, Animal.id != animal.id,
+                    )))).first()
+                    if clash:
+                        warn(f"Tag {animal.tag_number}: same tag exists at the original location, not moved back")
+                    else:
+                        animal.location_id = row.from_location_id
+                elif animal is not None:
+                    warn(f"Tag {animal.tag_number}: moved again since this event, location left unchanged")
+                await db.delete(row)
+        elif et in _REVERSIBLE_STATUS:
+            expected = _REVERSIBLE_STATUS[et]
+            for tag in tags:
+                animal = await _find_animal(db, tag, snap.species, prefer_location=snap.location_id,
+                                            prefer_status=expected)
+                if animal is None:
+                    continue
+                if animal.status == expected:
+                    _set_status(animal, AnimalStatus.ACTIVE)
+                else:
+                    warn(f"Tag {tag}: status is {animal.status.value} (changed since this event), left unchanged")
+        elif et in (EventType.CATEGORY_CHANGE, EventType.WEANING):
+            old_cat = snap.from_category_id or snap.category_id
+            for tag in tags:
+                animal = await _find_animal(db, tag, snap.species, prefer_location=snap.location_id)
+                if animal is not None and old_cat and animal.category_id == snap.to_category_id:
+                    animal.category_id = old_cat
+        elif deleting and et in (EventType.BOUGHT, EventType.GIFT_IN, EventType.BIRTH):
+            if tags or (et == EventType.BIRTH and snap.offspring_tags):
+                warn("Animals created by this event were left in the register; remove them manually if wrong")
+
+        await db.commit()
+    except Exception:
+        logger.exception("Animal register reverse failed for event %s", snap.id)
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("Rollback after animal register reverse failure also failed")
+        await _restore_after_rollback(db, *restore)
+        warnings.append(_SYNC_FAILED_MSG)
+    return warnings
+
+
 @api_router.post("/daily-logs/{log_id}/events", response_model=EventResponse)
 async def add_event_to_daily_log(
     log_id: int,
@@ -1124,6 +1383,9 @@ async def add_event_to_daily_log(
     log.has_events = True
 
     await db.commit()
+
+    # Sync animal register (best-effort: never rolls back the stock commit)
+    sync_warnings = await _sync_animals_from_event(db, event, log, current_user)
     await db.refresh(event)
 
     return EventResponse(
@@ -1151,6 +1413,7 @@ async def add_event_to_daily_log(
         buyer_phone=event.buyer_phone,
         buyer_address=event.buyer_address,
         sale_price=event.sale_price,
+        sync_warnings=sync_warnings or None,
     )
 
 @api_router.post("/daily-logs/{log_id}/lock")
@@ -1285,6 +1548,12 @@ async def update_event(
             detail=f"Fields not applicable to {event.event_type.value} event: {', '.join(sorted(_rejected))}"
         )
 
+    # Undo the OLD event's animal-register effects (best-effort, own commit, before any stock change)
+    daily_log = event.daily_log
+    sync_warnings: List[str] = await _reverse_animal_sync(
+        db, _event_snapshot(event, location_id, daily_log.log_date), restore=(event, daily_log)
+    )
+
     # Reverse the old stock changes if it was a stock event
     if event.is_stock_event:
         old_event_data = EventCreate(
@@ -1365,6 +1634,9 @@ async def update_event(
         await apply_event_to_stock(db, location_id, new_event_data)
 
     await db.commit()
+
+    # Re-apply the NEW event to the animal register (best-effort, after the stock commit)
+    sync_warnings += await _sync_animals_from_event(db, event, daily_log, current_user)
     await db.refresh(event)
 
     return EventResponse(
@@ -1394,6 +1666,7 @@ async def update_event(
         gift_party_name=event.gift_party_name,
         gift_party_phone=event.gift_party_phone,
         gift_reason=event.gift_reason,
+        sync_warnings=sync_warnings or None,
     )
 
 @api_router.delete("/events/{event_id}")
@@ -1416,6 +1689,16 @@ async def delete_event(
     location_id = event.daily_log.location_id
     daily_log = event.daily_log
     
+    # Undo the event's animal-register effects first (best-effort, own commit)
+    sync_warnings = await _reverse_animal_sync(
+        db, _event_snapshot(event, location_id, daily_log.log_date), deleting=True,
+        restore=(event, daily_log),
+    )
+    # Any history row still pointing at this event (e.g. reverse failed) must not block the delete
+    await db.execute(
+        update(AnimalLocationHistory).where(AnimalLocationHistory.event_id == event.id).values(event_id=None)
+    )
+
     # Reverse the stock changes if it was a stock event
     if event.is_stock_event:
         event_data = EventCreate(
@@ -1442,7 +1725,7 @@ async def delete_event(
         daily_log.has_events = False
     
     await db.commit()
-    return {"message": "Event deleted successfully"}
+    return {"message": "Event deleted successfully", "sync_warnings": sync_warnings or None}
 
 # ==================== STOCK LEVEL ROUTES ====================
 @api_router.get("/stock-levels", response_model=List[StockLevelResponse])
@@ -3195,6 +3478,42 @@ async def bulk_import_animals(
         message=f"Import complete. Created: {created}, Skipped (duplicates): {skipped}",
     )
 
+@api_router.get("/animals/register-reconciliation", response_model=List[ReconciliationRow])
+async def register_reconciliation(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)),
+):
+    """Per location + species: stock_levels total vs individually registered active animals."""
+    stock_rows = (await db.execute(
+        select(StockLevel.location_id, StockLevel.species, func.sum(StockLevel.current_count))
+        .group_by(StockLevel.location_id, StockLevel.species)
+    )).all()
+    reg_rows = (await db.execute(
+        select(Animal.location_id, Animal.species, func.count(Animal.id))
+        .where(Animal.status == AnimalStatus.ACTIVE)
+        .group_by(Animal.location_id, Animal.species)
+    )).all()
+    stock = {(loc, sp): int(total or 0) for loc, sp, total in stock_rows}
+    registered = {(loc, sp): int(n) for loc, sp, n in reg_rows}
+    names = {loc.id: loc.name for loc in (await db.execute(select(Location))).scalars().all()}
+
+    rows = []
+    for key in set(stock) | set(registered):
+        loc_id, sp = key
+        stock_count = stock.get(key, 0)
+        reg = registered.get(key, 0)
+        rows.append(ReconciliationRow(
+            location_id=loc_id,
+            location_name=names.get(loc_id, f"Location {loc_id}"),
+            species=sp,
+            stock_count=stock_count,
+            registered_active=reg,
+            registered_pct=round(reg / stock_count * 100, 1) if stock_count else None,
+            unregistered=stock_count - reg,
+        ))
+    rows.sort(key=lambda r: (r.location_name, r.species.value))
+    return rows
+
 @api_router.get("/animals/{animal_id}", response_model=AnimalResponse)
 async def get_animal(
     animal_id: int,
@@ -3212,6 +3531,32 @@ async def get_animal(
     if not animal:
         raise HTTPException(status_code=404, detail="Animal not found")
     return _animal_response(animal)
+
+@api_router.get("/animals/{animal_id}/location-history", response_model=List[AnimalLocationHistoryResponse])
+async def get_animal_location_history(
+    animal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)),
+):
+    if (await db.execute(select(Animal.id).where(Animal.id == animal_id))).first() is None:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    rows = (await db.execute(
+        select(AnimalLocationHistory)
+        .options(selectinload(AnimalLocationHistory.from_location), selectinload(AnimalLocationHistory.to_location))
+        .where(AnimalLocationHistory.animal_id == animal_id)
+        .order_by(AnimalLocationHistory.moved_date.desc(), AnimalLocationHistory.id.desc())
+    )).scalars().all()
+    return [
+        AnimalLocationHistoryResponse(
+            id=r.id, animal_id=r.animal_id,
+            from_location_id=r.from_location_id,
+            from_location_name=r.from_location.name if r.from_location else None,
+            to_location_id=r.to_location_id,
+            to_location_name=r.to_location.name if r.to_location else None,
+            moved_date=r.moved_date, event_id=r.event_id, notes=r.notes, created_at=r.created_at,
+        )
+        for r in rows
+    ]
 
 @api_router.put("/animals/{animal_id}", response_model=AnimalResponse)
 async def update_animal(

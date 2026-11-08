@@ -1,8 +1,8 @@
 # Data model
 Every column, constraint and an ER diagram: [context/data-model.md](context/data-model.md). Source: `backend/models.py`.
 
-## Entities (17 tables in models.py)
-`users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types`, and (reproduction/profile, added 2026-11-08) `bull_assignments`, `reproductive_cycles`, `bcs_records`, `animal_photos`, `animal_notes`.
+## Entities (18 tables in models.py)
+`users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types`, and (reproduction/profile, added 2026-11-08) `bull_assignments`, `reproductive_cycles`, `bcs_records`, `animal_photos`, `animal_notes`. Also `animal_location_history` (added 2026-11-08: animal move log written by the event-to-register sync; decision 0009).
 Legacy: table `registry_sync_outbox` still exists in existing databases but has no model; never drop it in routine work.
 
 ## Invariants

@@ -43,6 +43,9 @@ Auth describes backend enforcement, not frontend visibility. Shamba uses phone/p
 | PUT | `/api/daily-logs/{log_id}` | JWT ADMIN | update daily log | DailyLogUpdate -> DailyLogResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1197` |
 | PUT | `/api/events/{event_id}` | JWT ADMIN,DATA_ENTRY | update event | EventUpdate -> EventResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1266` |
 | DELETE | `/api/events/{event_id}` | JWT ADMIN | delete event | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1446` |
+
+Animal-register sync (decision 0009): `POST /api/daily-logs/{log_id}/events`, `PUT /api/events/{event_id}` and `DELETE /api/events/{event_id}` update/undo the individual animal register AFTER the stock commit, in separate best-effort transactions that never roll back stock. POST/PUT return skipped-tag messages in `EventResponse.sync_warnings` (optional list); DELETE returns `{message, sync_warnings}`.
+
 | GET | `/api/stock-levels` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list stock levels | path/query only -> List[StockLevelResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1495` |
 | POST | `/api/stock-levels/recompute` | JWT ADMIN | recompute stock levels endpoint | path/query only -> dict (no model) | Admin/manual; no frontend wrapper found | `backend/server.py:1528` |
 | GET | `/api/dashboard` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get dashboard | path/query only -> DashboardResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1540` |
@@ -54,6 +57,8 @@ Auth describes backend enforcement, not frontend visibility. Shamba uses phone/p
 | GET | `/api/animals` | JWT active user | list animals | path/query only -> List[AnimalResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3039` |
 | POST | `/api/animals` | JWT ADMIN,DATA_ENTRY | create animal | AnimalCreate -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3071` |
 | POST | `/api/animals/bulk-import` | JWT ADMIN | bulk import animals | UploadFile -> BulkImportResult | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3118` |
+| GET | `/api/animals/register-reconciliation` | JWT ADMIN,DATA_ENTRY,VIEWER | per location+species: stock_levels total vs registered active animals (`registered_pct` null when stock is 0; `unregistered` may be negative) | none -> List[ReconciliationRow] | none yet (backend only) | `backend/server.py` (register_reconciliation) |
+| GET | `/api/animals/{animal_id}/location-history` | JWT ADMIN,DATA_ENTRY,VIEWER | animal move log, newest first; 404 if animal missing | path -> List[AnimalLocationHistoryResponse] | none yet (backend only) | `backend/server.py` (get_animal_location_history) |
 | GET | `/api/animals/{animal_id}` | JWT active user | get animal | path/query only -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3318` |
 | PUT | `/api/animals/{animal_id}` | JWT ADMIN,DATA_ENTRY | update animal | AnimalUpdate -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3336` |
 | POST | `/api/animals/{animal_id}/transfer` | JWT ADMIN | transfer animal | AnimalTransfer -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3396` |

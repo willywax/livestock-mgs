@@ -192,6 +192,8 @@ class EventResponse(BaseModel):
     gift_party_name: Optional[str] = None
     gift_party_phone: Optional[str] = None
     gift_reason: Optional[str] = None
+    # Non-fatal animal-register sync messages (register updates are best-effort)
+    sync_warnings: Optional[List[str]] = None
 
 # Daily Log schemas
 class DailyLogCreate(BaseModel):
@@ -829,3 +831,28 @@ class ReproductionAnalyticsResponse(ReproductionMetrics):
     year: int
     location_id: Optional[int] = None
     by_location: List[LocationReproductionMetrics] = []
+
+
+# Animal register: location history + reconciliation
+class AnimalLocationHistoryResponse(BaseModel):
+    id: int
+    animal_id: int
+    from_location_id: Optional[int] = None
+    from_location_name: Optional[str] = None
+    to_location_id: int
+    to_location_name: Optional[str] = None
+    moved_date: date
+    event_id: Optional[int] = None
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+class ReconciliationRow(BaseModel):
+    location_id: int
+    location_name: str
+    species: SpeciesType
+    stock_count: int
+    registered_active: int
+    registered_pct: Optional[float] = None
+    unregistered: int
+
+ReconciliationResponse = List[ReconciliationRow]

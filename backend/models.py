@@ -453,3 +453,22 @@ class AnimalNote(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     animal = relationship("Animal")
+
+
+class AnimalLocationHistory(Base):
+    """Append-only log of animal location moves (event-driven or manual)."""
+    __tablename__ = "animal_location_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
+    from_location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)  # null = first recorded location
+    to_location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
+    moved_date = Column(Date, nullable=False)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=True, index=True)  # null for manual moves
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    animal = relationship("Animal")
+    from_location = relationship("Location", foreign_keys=[from_location_id])
+    to_location = relationship("Location", foreign_keys=[to_location_id])
