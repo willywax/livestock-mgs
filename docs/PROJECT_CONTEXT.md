@@ -11,8 +11,8 @@ Line numbers quoted from the repo analysis drift quickly; treat them as hints an
 - Users (roles): `admin`, `data_entry` (office staff entering logs), `viewer` (read-only). Login is by phone number + password (JWT).
 - Status: actively developed, in use (Unverified: the repo's deploy guide names live domains, but no deployment was inspected).
 - Last updated: 2026-11-08.
-- Branch/commit: working branch `ft/r1-auth-hardening`, stacked on `chore/remove-registry`, stacked on `chore/claude-setup`, which was created from `main` at `9b72555` ("Support registry tag edits and birth counts by sex"); `main` was 4 commits ahead of `origin/main`. Local branches `ft-edit-event` (same commit as main), `ft-schedule` and `new-ft` appear stale/merged (Unverified). The setup commits (untracked env/DB/log files, Claude config, docs) sit on `chore/claude-setup`; the Registry removal sits on `chore/remove-registry`; the auth hardening sits on `ft/r1-auth-hardening`; nothing is pushed or merged. Planned merge order: chore/claude-setup, chore/remove-registry, ft/r1-auth-hardening, then main.
-- No application code was changed by the setup work.
+- Branch/commit: working branch `ft/r1-auth-hardening` at `84978f2` ("Docs: record auth hardening..."); working tree has UNCOMMITTED changes (the new backend test suite, its docs/rule edits and one requirements line), stacked on `chore/remove-registry`, stacked on `chore/claude-setup`, which was created from `main` at `9b72555` ("Support registry tag edits and birth counts by sex"); `main` was 4 commits ahead of `origin/main`. Local branches `ft-edit-event` (same commit as main), `ft-schedule` and `new-ft` appear stale/merged (Unverified). The setup commits (untracked env/DB/log files, Claude config, docs) sit on `chore/claude-setup`; the Registry removal sits on `chore/remove-registry`; the auth hardening sits on `ft/r1-auth-hardening`; nothing is pushed or merged. Planned merge order: chore/claude-setup, chore/remove-registry, ft/r1-auth-hardening, then main.
+- No application code was changed by the setup or test work: the test suite only adds files under `backend/tests/` plus `pytest-asyncio` in `backend/requirements.txt`.
 
 ## 3. Tech stack
 | Layer | Technology (versions from `backend/requirements.txt`, `frontend/package.json`) |
@@ -43,7 +43,7 @@ livestock-mgs/
     auth.py                 JWT, password hashing, require_roles
     seed_data.py            default categories (Swahili names), bootstrap data
     requirements.txt, Dockerfile, .dockerignore
-    tests/                  conftest.py + 3 test modules (all live-HTTP, off-limits; no runnable automated tests)
+    tests/                  conftest.py + test_auth/test_stock/test_events (SQLite in-memory, runnable) + 3 live-HTTP modules (off-limits)
   frontend/
     src/App.js              all routes; src/index.js entry
     src/pages/              Dashboard, Locations, LocationDetail, Animals, FarmHealth, DailyLogs,
@@ -134,7 +134,8 @@ Never put real values for env vars into commands or docs. Names: `DATABASE_URL`,
 | Purpose | Command (from) | Status |
 |---|---|---|
 | Backend install | `python -m pip install -r requirements.txt` (backend) | not verified (an existing `.venv` already had the packages) |
-| Import smoke test | `python -c "import server"` (backend; dummy `DATABASE_URL`/`JWT_SECRET` set in the shell) | **verified** 2026-11-08 (starts nothing, connects to nothing). The former 57 mocked registry tests were deleted with the integration: **no automated backend tests exist** (ROADMAP R4) |
+| Import smoke test | `python -c "import server"` (backend; dummy `DATABASE_URL`/`JWT_SECRET` set in the shell) | **verified** 2026-11-08 (starts nothing, connects to nothing). See next row for the automated suite |
+| Backend tests | `cd backend && python -m pytest tests/test_auth.py tests/test_stock.py tests/test_events.py -q` (backend) | **verified** 2026-11-08: 45 passed (21 functions) in 4-10s depending on machine load. SQLite in-memory (aiosqlite), `httpx.ASGITransport`, fixed `JWT_SECRET=test-secret-key`, function-scoped DB; needs `pytest-asyncio`. Not valid evidence for PG enums/JSONB/locking. Do not include the live-HTTP modules |
 | Python syntax-level lint | `python -m flake8 --select=E9,F63,F7,F82 .` (backend) | **verified**: 0 findings. Full `flake8 .` reports ~1,270 style findings, so there is no baseline |
 | Test database | `docker compose -f docker-compose.test.yml up -d --wait`, later `... down -v` (repo root) | not verified: Docker daemon was not running. Loopback port 5433, no password; set `DATABASE_URL` in the shell |
 | Backend run | `python -m uvicorn server:app --reload --port 8000` (backend) | not verified (a startup attempt against a dead DB port failed as expected). Runs DDL + seeding; denied for Claude in settings, the user runs it, test DB only |
@@ -171,13 +172,13 @@ Everything below is in the repo on branch `chore/claude-setup` (not yet merged).
 
 ## 10. Current work
 Recent commits on `main` (newest first): `9b72555` Support registry tag edits and birth counts by sex; `114b280`, `4baae11` changes to tags; `9c52010` view extra details in edit logs; `56f3558` logs and vaccines; `f1f227e` animals. The Registry work in those commits was removed on branch `chore/remove-registry`. Most-changed files before that: `backend/server.py`, `backend/schemas.py`, `frontend/src/pages/NewDailyLog.jsx`, `DailyLogDetail.jsx`, `frontend/src/lib/api.js`.
-In progress: three stacked, unmerged branches (see section 2). `ft/r1-auth-hardening` (latest) put JWT auth on 13 previously open GET routes; health, login and three CSV template downloads stay public (K21). Next candidates: ROADMAP R2 (fail-closed secrets, owner rotates credentials), R4 (backend tests). No other open tasks identified (Unverified: no tracker).
-Known issues: `docs/KNOWN_ISSUES.md` (open: K01, K07, K11, K14-K21; K02 closed on ft/r1-auth-hardening; K03-K06, K08-K10, K12-K13 resolved by the removal). Headline themes only: credential hygiene, public CSV templates (K21), concurrency, no automated backend tests, and inert legacy Registry data to clean up by the owner. Credentials that were once committed must be rotated by the owner.
+In progress: three stacked, unmerged branches (see section 2); the first backend test suite (auth, stock helpers, events; SQLite in-memory) is written but uncommitted. `ft/r1-auth-hardening` (latest) put JWT auth on 13 previously open GET routes; health, login and three CSV template downloads stay public (K21). Next candidates: ROADMAP R2 (fail-closed secrets, owner rotates credentials), R4 remainder (Postgres-backed tests, wider route coverage). No other open tasks identified (Unverified: no tracker).
+Known issues: `docs/KNOWN_ISSUES.md` (open: K01, K07, K11, K14-K21; K02 closed on ft/r1-auth-hardening; K03-K06, K08-K10, K12-K13 resolved by the removal). Headline themes only: credential hygiene, public CSV templates (K21), concurrency, thin test coverage (SQLite suite only for auth/stock/events), and inert legacy Registry data to clean up by the owner. Credentials that were once committed must be rotated by the owner.
 
 ## 11. Roadmap
 Full table: `docs/ROADMAP.md` (sizes are estimates, Unverified). Dairy is out of scope (owner decision).
 1. R2 Fail-closed secret/bootstrap handling; owner rotates credentials — medium.
-2. R4 Backend test suite (none exists): verify the Docker test DB, add mocked and Postgres-backed tests — medium.
+2. R4 Backend test suite (SQLite suite for auth/stock/events exists; remaining: verify the Docker test DB, Postgres-backed and concurrency tests, wider coverage) — medium.
 3. R6 Atomic stock updates + positive-count validation — medium.
 4. R8 Align deployment config; owner removes obsolete Registry env vars/scheduler — small.
 5. R10 Frontend tests + CI (needs approval) — medium.
@@ -200,7 +201,7 @@ Must never break: stock arithmetic and the atomic event+stock commit; role enfor
 Structure every prompt: goal in one sentence; area (backend/frontend/both); files to read first; constraints from section 12; required checks; "plan first, wait for approval" for anything touching stock, events or schema.
 - Start from a slash command: `/plan-feature` for features, `/fix-bug` for defects, `/db-change` for schema, `/next-improvement` to take the top roadmap item, `/ship-check` to finish, `/update-docs` then `/update-context` after docs-relevant changes. Tell Claude Code to run the command by name.
 - Files to name: use `docs/context/codemap.md` rows. Common sets: stock/events -> `backend/server.py`, `backend/models.py`, `backend/schemas.py`, `frontend/src/pages/NewDailyLog.jsx`, `DailyLogDetail.jsx`; health -> `backend/server.py` (health section), `frontend/src/pages/FarmHealth.jsx`; auth -> `backend/auth.py`, `frontend/src/context/AuthContext.js`.
-- Checks to require: `flake8 --select=E9,F63,F7,F82` and `python -c "import server"` (dummy env) in `backend/`, `npm run build` for frontend work, docs updated per the definition of done. State which behaviours were verified only by reading code (no automated backend tests exist).
+- Checks to require: `flake8 --select=E9,F63,F7,F82` and `python -c "import server"` (dummy env) in `backend/`, `npm run build` for frontend work, docs updated per the definition of done. Run the backend pytest command from section 8 for auth/stock/event work, and state which behaviours were verified only by reading code (Postgres-specific behaviour is outside the SQLite suite).
 - Tell it what NOT to do: run live-HTTP tests, start the server against anything but the Docker test DB, run `gcloud`, push, or touch `.env` files.
 
 Example prompt:
@@ -211,7 +212,7 @@ Example prompt:
 3. Real deployment process and secret configuration; the `docs/DEPLOYMENT.md` release/rollback steps are standard-practice guesses.
 5. The Docker test DB (`docker-compose.test.yml`) and starting the backend against it: not verified because Docker was not running.
 6. Whether `pip install -r backend/requirements.txt` and `yarn install --frozen-lockfile` work on a clean machine; `npm start` and `npm test` not run; build warnings not reviewed.
-7. Exact enforcement of the negative-stock override, locked logs and per-route roles beyond what `docs/context/api.md` says.
+7. Negative-stock override, locked-log edits and the admin-only add-event route are now covered by SQLite tests (backend/tests/test_events.py, test_stock.py); other per-route roles beyond `docs/context/api.md` and Postgres-specific behaviour remain Unverified.
 8. Whether `ft-schedule`, `new-ft`, `origin/fx-changes` hold unmerged work.
 9. Owner's must-never-break list beyond what the code and `memory/PRD.md` imply (guess used: stock never negative without admin override, atomic transfers/category changes, locked logs immutable).
 10. Whether CI should be added; roadmap sizes and priorities are estimates.
