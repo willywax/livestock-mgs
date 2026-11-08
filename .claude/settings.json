@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest backend/tests/test_registry_auth.py*)",
+      "Bash(python -m pytest backend/tests/test_registry_client.py*)",
+      "Bash(python -m pytest backend/tests/test_registry_report.py*)",
+      "Bash(python -m pytest backend/tests/test_registry_sync.py*)",
+      "Bash(python -m flake8 --select=E9,F63,F7,F82*)",
+      "Bash(python -m flake8 --count*)",
+      "Bash(npm run build)",
+      "Bash(npm test -- --watchAll=false)",
+      "Bash(docker compose -f docker-compose.test.yml *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git rev-parse*)",
+      "Bash(wc *)",
+      "Bash(ls *)"
+    ],
+    "deny": [
+      "Read(./**/.env)",
+      "Read(./**/.env.local)",
+      "Read(./**/.env.*.local)",
+      "Read(./**/*.db)",
+      "Read(./**/*.log)",
+      "Read(./**/node_modules/**)",
+      "Read(./**/.venv/**)",
+      "Read(./**/build/**)",
+      "Read(./**/__pycache__/**)",
+      "Read(./backend/sampe.txt)",
+      "Read(./backend_test_results.json)",
+      "Edit(./**/.env)",
+      "Write(./**/.env)",
+      "Bash(gcloud *)",
+      "Bash(git push*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean*)",
+      "Bash(git checkout -- *)",
+      "Bash(git branch -D*)",
+      "Bash(rm -rf*)",
+      "Bash(rm -r *)",
+      "Bash(cat *.env)",
+      "Bash(*test_disease_events*)",
+      "Bash(*test_csv_import*)",
+      "Bash(*test_dashboard_analytics*)",
+      "Bash(*backend_test.py*)",
+      "Bash(*uvicorn*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-files.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
