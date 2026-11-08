@@ -15,7 +15,6 @@ import {
   Cow,
   Gear,
   FirstAidKit,
-  Broadcast,
 } from '@phosphor-icons/react';
 import { Button } from './ui/button';
 import { cn } from '../lib/utils';
@@ -30,7 +29,6 @@ const navItems = [
   { path: '/reports', icon: ChartBar, label: 'Reports', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/settings', icon: Gear, label: 'Settings', roles: ['admin'] },
   { path: '/admin/users', icon: Users, label: 'Users', roles: ['admin'] },
-  { path: '/admin/registry-sync', icon: Broadcast, label: 'Registry Sync', roles: ['admin'] },
 ];
 
 export const Layout = ({ children }) => {

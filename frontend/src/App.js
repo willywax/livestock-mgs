@@ -18,7 +18,6 @@ import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import Animals from "./pages/Animals";
 import FarmHealth from "./pages/FarmHealth";
-import RegistrySync from "./pages/RegistrySync";
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -180,15 +179,6 @@ function AppRoutes() {
         element={
           <ProtectedRoute allowedRoles={["admin"]}>
             <Settings />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/admin/registry-sync"
-        element={
-          <ProtectedRoute allowedRoles={["admin"]}>
-            <RegistrySync />
           </ProtectedRoute>
         }
       />

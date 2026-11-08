@@ -15,7 +15,6 @@ import { Calendar } from '../components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../components/ui/alert-dialog';
-import RegistryTagPicker from '../components/RegistryTagPicker';
 import { ArrowLeft, CalendarBlank, MapPin, Lock, CheckCircle, ArrowsLeftRight, ArrowsDownUp, Pencil, Trash, Plus, Eye } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
@@ -305,7 +304,6 @@ const DailyLogDetail = () => {
       gift_reason: event.gift_reason || '',
       animal_tags: event.animal_tags || '',
       notes: event.notes || '',
-      registry_previous_status: '',
     });
     setDetailSheetOpen(true);
   };
@@ -318,9 +316,6 @@ const DailyLogDetail = () => {
 
       if (detailEditForm.notes) payload.notes = detailEditForm.notes;
       if (detailEditForm.animal_tags) payload.animal_tags = detailEditForm.animal_tags;
-      if (detailEditForm.registry_previous_status) {
-        payload.registry_previous_status = detailEditForm.registry_previous_status;
-      }
 
       if (et === 'death') {
         if (detailEditForm.cause_of_death) payload.cause_of_death = detailEditForm.cause_of_death;
@@ -341,11 +336,8 @@ const DailyLogDetail = () => {
         if (detailEditForm.gift_reason) payload.gift_reason = detailEditForm.gift_reason;
       }
 
-      const res = await updateEvent(selectedEvent.id, payload);
+      await updateEvent(selectedEvent.id, payload);
       toast.success('Event updated');
-      if (res.data?.registry_sync_warning) {
-        toast.warning(res.data.registry_sync_warning);
-      }
       setDetailSheetOpen(false);
       setSheetMode('view');
       loadLog();
@@ -613,19 +605,6 @@ const DailyLogDetail = () => {
             const typeSpecificTypes = ['death', 'birth', 'sold', 'gift_in', 'gift_out'];
             const canEditInSheet = isDataEntry && typeSpecificTypes.includes(et);
             const isLocked = log?.is_locked;
-            // The Registry's own category codes are Swahili (e.g. "KOO"), matching name_sw.
-            const eventCategoryName = (categories[selectedEvent.species] || []).find(
-              (c) => c.id.toString() === selectedEvent.category_id?.toString()
-            )?.name_sw;
-
-            function handleTagPick(field, tag) {
-              setDetailEditForm({
-                ...detailEditForm,
-                [field]: tag ? tag.tag_id : '',
-                registry_previous_status: tag ? tag.status : '',
-              });
-            }
-
             return (
               <>
                 <SheetHeader className="mb-4">
@@ -776,12 +755,10 @@ const DailyLogDetail = () => {
                       <>
                         <div className="space-y-1">
                           <Label>Mother Tag (Dam)</Label>
-                          <RegistryTagPicker
-                            species={selectedEvent.species}
-                            location={log?.location_name}
-                            value={detailEditForm.mother_tag ? { tag_id: detailEditForm.mother_tag, location: log?.location_name } : null}
-                            onChange={(tag) => handleTagPick('mother_tag', tag)}
-                            placeholder="Select the dam from the Herd Tag Registry"
+                          <Input
+                            value={detailEditForm.mother_tag || ''}
+                            onChange={e => setDetailEditForm({ ...detailEditForm, mother_tag: e.target.value })}
+                            placeholder="Mother (dam) tag"
                           />
                         </div>
                         <div className="space-y-1">
@@ -857,23 +834,12 @@ const DailyLogDetail = () => {
                     )}
                     <div className="space-y-1">
                       <Label>Animal Tags</Label>
-                      {et === 'death' || et === 'sold' ? (
-                        <RegistryTagPicker
-                          species={selectedEvent.species}
-                          location={log?.location_name}
-                          category={eventCategoryName}
-                          value={detailEditForm.animal_tags ? { tag_id: detailEditForm.animal_tags, category: eventCategoryName, location: log?.location_name } : null}
-                          onChange={(tag) => handleTagPick('animal_tags', tag)}
-                          placeholder="Select the animal from the Herd Tag Registry"
-                        />
-                      ) : (
-                        <Textarea
-                          rows={2}
-                          value={detailEditForm.animal_tags}
-                          onChange={e => setDetailEditForm({ ...detailEditForm, animal_tags: e.target.value })}
-                          placeholder="Comma-separated tags"
-                        />
-                      )}
+                      <Textarea
+                        rows={2}
+                        value={detailEditForm.animal_tags}
+                        onChange={e => setDetailEditForm({ ...detailEditForm, animal_tags: e.target.value })}
+                        placeholder="Comma-separated tags"
+                      />
                     </div>
                     <div className="space-y-1">
                       <Label>Notes</Label>
