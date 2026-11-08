@@ -1,7 +1,10 @@
 # ShambaManager API
 
+> **Updated 2026-11-08:** the Herd Tag Registry integration was removed from the application (docs/decisions/0007). Content below was trimmed accordingly; line numbers are from the 2026-10-08 snapshot and have shifted. Treat anything still mentioning the Registry as historical.
+
+
 Source-only snapshot: 2026-10-08; deployment and database state were not inspected.
-68 explicitly declared HTTP routes. Framework-generated /docs, /redoc and /openapi.json are public by default; they are not business endpoints. Registry static /assets is conditional on built assets.
+62 explicitly declared HTTP routes (68 before the Registry removal). Framework-generated /docs, /redoc and /openapi.json are public by default; they are not business endpoints. Registry static /assets is conditional on built assets.
 
 Auth describes backend enforcement, not frontend visibility. Shamba uses phone/password JWT; Registry uses name/PIN JWT. OIDC is a separate service identity. Request names omit injected DB/auth arguments; untyped responses are labeled explicitly.
 
@@ -49,8 +52,6 @@ Auth describes backend enforcement, not frontend visibility. Shamba uses phone/p
 | GET | `/api/animals` | JWT active user | list animals | path/query only -> List[AnimalResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3039` |
 | POST | `/api/animals` | JWT ADMIN,DATA_ENTRY | create animal | AnimalCreate -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3071` |
 | POST | `/api/animals/bulk-import` | JWT ADMIN | bulk import animals | UploadFile -> BulkImportResult | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3118` |
-| GET | `/api/animals/untagged-calves` | JWT ADMIN | list untagged calves | path/query only -> List[UntaggedCalfResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3241` |
-| POST | `/api/animals/{animal_id}/assign-registry-tag` | JWT ADMIN | assign registry tag | AnimalAssignRegistryTag -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3280` |
 | GET | `/api/animals/{animal_id}` | JWT active user | get animal | path/query only -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3318` |
 | PUT | `/api/animals/{animal_id}` | JWT ADMIN,DATA_ENTRY | update animal | AnimalUpdate -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3336` |
 | POST | `/api/animals/{animal_id}/transfer` | JWT ADMIN | transfer animal | AnimalTransfer -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3396` |
@@ -71,15 +72,10 @@ Auth describes backend enforcement, not frontend visibility. Shamba uses phone/p
 | PUT | `/api/vaccine-types/{vt_id}` | JWT ADMIN | update vaccine type | VaccineTypeUpdate -> VaccineTypeResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3988` |
 | DELETE | `/api/vaccine-types/{vt_id}` | JWT ADMIN | delete vaccine type | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:4014` |
 | GET | `/api/farm-health-events/last-vaccinations` | JWT active user | get last vaccinations | path/query only -> List[LastVaccinationSummary] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:4035` |
-| POST | `/api/internal/sync/drain` | OIDC service | drain registry sync | path/query only -> SyncDrainResult | Intended scheduler/service; no caller config found | `backend/server.py:4095` |
-| GET | `/api/integration/registry/tags` | JWT active user | search registry tags | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:4106` |
-| GET | `/api/internal/sync/report` | JWT ADMIN | get registry sync report | path/query only -> SyncReportResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:4137` |
-| POST | `/api/internal/sync/{outbox_id}/retry` | JWT ADMIN | retry registry sync row | path/query only -> OutboxIssueResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:4155` |
 
 ## Schema and auth lookup
 
 - Pydantic contracts: `backend/schemas.py:1`; enum values: `backend/models.py:9`. Request models with optional fields do not necessarily support clearing fields; handlers commonly ignore None.
-- Active-user verification and role factory: `backend/auth.py:37`, `backend/auth.py:67`; internal OIDC: `backend/registry_auth.py:34`.
+- Active-user verification and role factory: `backend/auth.py:37`, `backend/auth.py:67`.
 - High: unauthenticated business reads include daily logs, opening balances, stock and reports (`backend/server.py:773`, `backend/server.py:1990`). Browser ProtectedRoute (`frontend/src/App.js:24`) does not secure these routes.
 - Low: generated API/client comments can lag actual roles: add-event is ADMIN, update-event allows ADMIN/DATA_ENTRY, lock allows ADMIN/VIEWER (`backend/server.py:1071`, `backend/server.py:1266`, `backend/server.py:1179`).
-- High: Registry tag assignment commits a raw tag link before delivery/validation; a missing Registry tag leaves a persisted local link (`backend/server.py:3295`).

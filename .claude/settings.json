@@ -2,11 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Bash(python -m pytest backend/tests/test_registry_auth.py*)",
-      "Bash(python -m pytest backend/tests/test_registry_client.py*)",
-      "Bash(python -m pytest backend/tests/test_registry_report.py*)",
-      "Bash(python -m pytest backend/tests/test_registry_sync.py*)",
       "Bash(python -m flake8 --select=E9,F63,F7,F82*)",
+      "Bash(python -c \"import server\")",
       "Bash(python -m flake8 --count*)",
       "Bash(npm run build)",
       "Bash(npm test -- --watchAll=false)",

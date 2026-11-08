@@ -8,7 +8,7 @@ Counts-based livestock inventory for a Tanzanian ranch: species cattle, sheep, g
 - Negative stock is blocked for non-admins; admin may override (from PRD; exact enforcement Unverified).
 - Roles: admin (everything), data_entry (create logs/events/animals), viewer (read).
 - Farm health: dipping, deworming, vaccination with configurable intervals and overdue/upcoming views. Rotation of chemicals and outbound notifications are not implemented.
-- Registry owns tag identity/DOB/cohort/stage/status; `production_stage` and status are independent.
+- Tag identity is local free text (animal tags on events, `animals.tag_number`). The external Registry integration was removed.
 
 ## Glossary
 | Term | Meaning |
@@ -20,9 +20,7 @@ Counts-based livestock inventory for a Tanzanian ranch: species cattle, sheep, g
 | Ndama (Dume/Jike) | calves (bull/heifer) |
 | Vichinda | kids/lambs |
 | Maksai | steers / castrated males |
-| Mbegu / Dume Mbegu | breeding males (Registry spells MBEGU) |
+| Mbegu / Dume Mbegu | breeding males |
 | Dume Wadogo | young males |
 | Dume / Jike | male / female |
 | EPC | RFID electronic product code |
-| birth_cohort | Registry: DOB year + H1 (Jan-Jun) / H2 (Jul-Dec) |
-| Outbox / drain | queued Registry intents / authenticated batch send |

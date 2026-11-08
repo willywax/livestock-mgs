@@ -8,13 +8,12 @@ Source: README_DEPLOY_GCP.md, backend/Dockerfile, frontend/Dockerfile, frontend/
 
 ## Environment variable NAMES (never values)
 - Backend: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `PORT`.
-- Registry client: `REGISTRY_BASE_URL`, `REGISTRY_AUDIENCE`, `REGISTRY_DEATH_STATUS`, `REGISTRY_SOLD_STATUS`.
-- Drain auth: `INTERNAL_SYNC_AUDIENCE`, `SYNC_ALLOWED_SERVICE_ACCOUNTS`.
+- Obsolete (inert, safe to remove from Cloud Run): `REGISTRY_BASE_URL`, `REGISTRY_AUDIENCE`, `REGISTRY_DEATH_STATUS`, `REGISTRY_SOLD_STATUS`, `INTERNAL_SYNC_AUDIENCE`, `SYNC_ALLOWED_SERVICE_ACCOUNTS`. Delete any Cloud Scheduler job that called `/api/internal/sync/drain` (route no longer exists).
 - Frontend (build-time): `REACT_APP_BACKEND_URL`; dev tooling `ENABLE_HEALTH_CHECK`, `ENABLE_VISUAL_EDITS`, `WDS_SOCKET_PORT`.
 - Backend loads `backend/.env` locally (not committed). Prefer Cloud Run secret bindings in deployed environments (Unverified how prod is configured).
 
 ## Release steps (manual; run only via `/release`, when asked)
-1. On a clean branch: mocked tests, syntax lint, `npm run build` all pass (`/ship-check`).
+1. On a clean branch: import smoke test, syntax lint and `npm run build` all pass (`/ship-check`). No automated backend tests exist.
 2. Backend (from `backend/`): `gcloud builds submit --tag <image> .` then `gcloud run deploy shamba-backend --image <image> --platform managed --region <confirmed region>`; bind env/secrets by name.
 3. Frontend (from `frontend/`): `gcloud builds submit --config cloudbuild.yaml .` then `gcloud run deploy srcstock --image <image> ...`. `REACT_APP_BACKEND_URL` is a build arg in cloudbuild.yaml.
 4. Schema changes: backend startup applies DDL on boot, so deploy only after `/db-change` review.
@@ -27,4 +26,4 @@ Shift traffic to the previous revision (`gcloud run services update-traffic <ser
 README_DEPLOY_GCP.md frontend `--build-arg` command is wrong for `gcloud builds submit`; use cloudbuild.yaml. README places secrets in `--set-env-vars`; do not copy that into shell history or docs.
 
 ## Last local verification (2026-11-08)
-Mocked tests: 57 passed. flake8 syntax-level: 0 findings. `npm run build`: compiled successfully (warnings not reviewed). `docker-compose.test.yml`: NOT verified, Docker daemon was not running. Backend start against the test DB: not verified.
+Import smoke test: passes. flake8 syntax-level: 0 findings. (The 57 mocked registry tests were deleted with the integration.) `npm run build`: compiled successfully after the removal (only pre-existing react-hooks warnings in untouched files). `docker-compose.test.yml`: NOT verified, Docker daemon was not running. Backend start against the test DB: not verified.

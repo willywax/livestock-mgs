@@ -1,5 +1,8 @@
 # Data model
 
+> **Updated 2026-11-08:** the Herd Tag Registry integration was removed from the application (docs/decisions/0007). Content below was trimmed accordingly; line numbers are from the 2026-10-08 snapshot and have shifted. Treat anything still mentioning the Registry as historical.
+
+
 Snapshot: 2026-10-08. This is declared source schema, not verified live schema. Every column is listed below.
 Notation: `?` nullable; `!` NOT NULL; PK primary key; UQ unique; IX single-column index; FK names the target and delete behavior. Defaults are ORM-side unless marked server. SQLAlchemy Column without nullable is nullable unless PK; Mapped annotations infer nullability and SQL type when omitted.
 
@@ -118,14 +121,8 @@ Source: `backend/models.py:302`.
 - `created_by: Integer ? [FK users.id]`; `created_at: DateTime(timezone=True) ? [default=UTC now]`; `updated_at: DateTime(timezone=True) ?`.
 - ORM relationships: `creator=relationship('User', foreign_keys=[created_by])`.
 
-## registry_sync_outbox / RegistrySyncOutbox
-Source: `backend/models.py:332`.
-
-- `id: UUID(as_uuid=True) ! [PK; default=uuid.uuid4]`; `source_event_id: String(100) ! [UQ; IX]`; `tag_id: String(100) ! [IX]`.
-- `action: SQLEnum(RegistrySyncAction) !`; `intended_status: String(50) ?`; `previous_status: String(50) ?`.
-- `payload: JSONB !`; `state: SQLEnum(RegistrySyncState) ! [default=RegistrySyncState.PENDING]`; `attempts: Integer ! [default=0]`.
-- `last_error: Text ?`; `created_at: DateTime(timezone=True) ? [default=UTC now]`; `sent_at: DateTime(timezone=True) ?`.
-- ORM relationships: none declared.
+## registry_sync_outbox (legacy, not in models.py)
+Table remains in existing databases as inert data (columns were: id UUID PK, source_event_id, tag_id, action, intended_status, previous_status, payload JSONB, state, attempts, last_error, created_at, sent_at). The ORM model and its enums were removed 2026-11-08. Never drop it in routine work; fresh databases will not create it.
 
 ## Enum values
 
@@ -138,8 +135,6 @@ Source: `backend/models.py:332`.
 - `AnimalStatus`: ACTIVE=active, SOLD=sold, DEAD=dead, TRANSFERRED=transferred, MISSING=missing (`backend/models.py:122`).
 - `HealthEventType`: DIPPING=dipping, VACCINATION=vaccination, DEWORMING=deworming, LOG=log (`backend/models.py:243`).
 - `CategoryScope`: ALL=all, SPECIFIC=specific (`backend/models.py:249`).
-- `RegistrySyncAction`: STATUS_CHANGE=STATUS_CHANGE, EVENT=EVENT, REVERT=REVERT (`backend/models.py:319`).
-- `RegistrySyncState`: PENDING=PENDING, SENT=SENT, FAILED=FAILED, CONFLICT=CONFLICT (`backend/models.py:325`).
 
 ## Foreign-key ER diagram
 
@@ -181,9 +176,6 @@ erDiagram
   vaccine_types {
     int id PK
   }
-  registry_sync_outbox {
-    uuid id PK
-  }
   users |o--o{ locations : "created_by"
   users |o--o{ locations : "updated_by"
   locations ||--o{ opening_balances : "location_id"
@@ -221,8 +213,8 @@ Diagram shows physical foreign keys only. Free-text category/location/status/tag
 
 - High: startup uses create_all plus a small set of nullable ALTER additions; it does not evolve existing enum types, nullability or constraints (`backend/server.py:98`, `backend/database.py:55`). Alembic is installed but no migration directory/config is present.
 - Required policy: nullable `ADD COLUMN IF NOT EXISTS` only for future column additions. Never rely on create_all to change an existing table. New tables/indexes need an explicit reviewed plan; this analysis executes no DDL.
-- Non-additive candidates: `animals.birth_date/status/tag_number/sex/species/category_id/location_id` if identity ownership moves to Registry; do not drop/rename/retype these in place (`backend/models.py:212`). Introduce nullable references/projections and transition reads first.
-- `animals` uniqueness includes mutable location, and `registry_tag_id` is indexed but not unique (`backend/models.py:231`, `backend/models.py:240`); global identity enforcement requires reconciliation before any uniqueness change.
-- SQLEnum-backed user roles, species, event types, abortion stages, animal sex/acquisition/status, health event/scope and outbox action/state require explicit PostgreSQL enum work if members change. Python enum edits alone are insufficient (`backend/models.py:9`).
+- Non-additive candidates: `animals.birth_date/status/tag_number/sex/species/category_id/location_id` if identity ownership changes; do not drop/rename/retype these in place (`backend/models.py:212`). Introduce nullable references/projections and transition reads first.
+- `animals` uniqueness includes mutable location, and `registry_tag_id` is indexed but not unique (inert legacy column) (`backend/models.py:231`, `backend/models.py:240`); global identity enforcement requires reconciliation before any uniqueness change.
+- SQLEnum-backed user roles, species, event types, abortion stages, animal sex/acquisition/status, health event/scope require explicit PostgreSQL enum work if members change. Python enum edits alone are insufficient (`backend/models.py:9`).
 - `events.animal_tags/offspring_tags` CSV text, `farm_health_events.category_ids` JSON, Float costs, and integer sale_price require a parallel representation/backfill if normalized or made precise; no destructive conversion (`backend/models.py:159`, `backend/models.py:178`, `backend/models.py:284`).
-- Medium index candidates from actual reads: `events(daily_log_id)` for joins; `daily_logs(log_date)` for global range reports; `farm_health_events(location_id,event_type,species,event_date)` / next_due_date; outbox state+created_at for drain. Existing PK/UQ indexes are listed above; validate with query plans later (`backend/server.py:2014`, `backend/server.py:3658`, `backend/registry_sync.py:111`).
+- Medium index candidates from actual reads: `events(daily_log_id)` for joins; `daily_logs(log_date)` for global range reports; `farm_health_events(location_id,event_type,species,event_date)` / next_due_date. Existing PK/UQ indexes are listed above; validate with query plans later (`backend/server.py:2014`, `backend/server.py:3658`).

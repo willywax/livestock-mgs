@@ -18,7 +18,7 @@ Regenerate `docs/PROJECT_CONTEXT.md` so it matches the repo now. Edit only that 
    - `backend/models.py` enums and tables, route list in `backend/server.py`, and `frontend/src/App.js` routes.
 3. Update each section from that evidence. Specifically:
    - Section 2: today's date, branch, commit hash, working-tree state.
-   - Section 8: re-run only the SAFE verified commands (the mocked pytest set with dummy `DATABASE_URL` and `JWT_SECRET`, `flake8 --select=E9,F63,F7,F82`) and update their status. Leave anything else "not verified" unless you ran it. Never run deploy commands, the backend server, or the live-HTTP tests.
+   - Section 8: re-run only the SAFE verified commands (the import smoke test `python -c "import server"` with dummy `DATABASE_URL` and `JWT_SECRET`, and `flake8 --select=E9,F63,F7,F82`) and update their status. Leave anything else "not verified" unless you ran it. Never run deploy commands, the backend server, or the live-HTTP tests.
    - Section 9: list every slash command, subagent, hook, rule and the definition of done that actually exists under `.claude/` and `CLAUDE.md`; remove items that no longer exist, add new ones.
    - Sections 10-11: recent commits, in-progress work, known issues and roadmap; if `docs/KNOWN_ISSUES.md` and `docs/ROADMAP.md` exist, summarise and point to them.
    - Section 14: drop questions that are now answered, add new ones.

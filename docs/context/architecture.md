@@ -1,4 +1,7 @@
 # ShambaManager architecture and inventory
+
+> **Updated 2026-11-08:** the Herd Tag Registry integration was removed from the application (docs/decisions/0007). Content below was trimmed accordingly; line numbers are from the 2026-10-08 snapshot and have shifted. Treat anything still mentioning the Registry as historical.
+
 Snapshot: 2026-10-08, main 9b72555, tag pre-analysis-20261008. Actual folder is livestock-mgs, not livestock-manager.
 This audit reads source only. No tests, app startup, migration, database connection or deployed call was run during this analysis.
 
@@ -26,8 +29,7 @@ livestock-mgs/
   .claude/                 (empty at audit start)
   .vscode/                settings.json (local editor configuration)
   backend/                auth.py, database.py, models.py, schemas.py, server.py,
-                          registry_auth.py, registry_client.py, registry_report.py,
-                          registry_sync.py, seed_data.py, requirements.txt, Dockerfile,
+                          seed_data.py, requirements.txt, Dockerfile,
                           .dockerignore, tests/
   frontend/               src/, public/, plugins/, package.json, Dockerfile,
                           cloudbuild.yaml, nginx.conf, craco.config.js, tailwind.config.js,
@@ -51,8 +53,6 @@ Medium: deploy guide specifies us-central1, whereas supplied target context says
 - Database: DATABASE_URL (`backend/database.py:36`).
 - User authentication: JWT_SECRET (`backend/auth.py:14`).
 - Browser/API: CORS_ORIGINS, REACT_APP_BACKEND_URL (`backend/server.py:87`, `frontend/src/lib/api.js:3`).
-- Registry client: REGISTRY_BASE_URL, REGISTRY_AUDIENCE, REGISTRY_DEATH_STATUS, REGISTRY_SOLD_STATUS (`backend/registry_client.py:25`, `backend/registry_sync.py:26`).
-- Internal OIDC: INTERNAL_SYNC_AUDIENCE, SYNC_ALLOWED_SERVICE_ACCOUNTS (`backend/registry_auth.py:29`).
 - Frontend tooling: NODE_ENV, ENABLE_HEALTH_CHECK, ENABLE_VISUAL_EDITS (`frontend/craco.config.js:7`).
 - Container/runtime: PORT, PYTHONDONTWRITEBYTECODE, PYTHONUNBUFFERED (`backend/Dockerfile:5`, `:13`).
 - Tests also read REACT_APP_BACKEND_URL; some tests have a remote fallback (`backend/tests/test_disease_events.py:12`). Never run the entire suite against an unverified environment.
@@ -62,18 +62,15 @@ Medium: deploy guide specifies us-central1, whereas supplied target context says
 flowchart LR
   Pages[React pages and AuthContext] --> API[Axios lib/api.js]
   API --> Routes[server.py API router]
-  Routes --> Auth[JWT roles or internal OIDC]
+  Routes --> Auth[JWT roles]
   Routes --> Schemas[Pydantic schemas]
   Routes --> Stock[stock helpers in server.py]
   Routes --> ORM[AsyncSession models]
   Stock --> ORM
   ORM --> PG[(PostgreSQL)]
-  Routes --> Outbox[registry_sync]
-  Outbox --> Client[registry_client]
-  Client --> Registry[External Registry]
 ```
 - Routes and most business services share the 4,174-line server.py; no repository abstraction. Dependency-injected AsyncSession is closed after requests; expire_on_commit=False; explicit execute/flush/commit (`backend/database.py:44`, `backend/server.py:927`).
-- Log creation validates stock, creates events, adjusts stock and creates outbox before commit; sending occurs after commit (`backend/server.py:957`). Editing reverses old stock then applies new stock; deletion reverses and removes locally (`:1311`, `:1446`).
+- Log creation validates stock, creates events, adjusts stock and commits (`backend/server.py:957`). Editing reverses old stock then applies new stock; deletion reverses and removes locally (`:1311`, `:1446`).
 - Opening balances plus events are the aggregate history. stock_levels is a mutable projection, rebuilt by recompute; animal rows are a separate individual register, not the source for every stock report (`backend/server.py:1791`, `:2812`, `:2839`, `:2967`).
 - Farm-health intervals and event rows compute due dates; vaccine types can override the interval; summaries show overdue/upcoming events (`backend/server.py:3489`, `:3635`, `:3814`).
 - Startup creates missing tables, adds selected nullable columns/index, seeds categories/default admin/vaccines. Avoid starting it during read-only work (`backend/server.py:98`).
@@ -93,12 +90,11 @@ All routes are in `frontend/src/App.js:65`; layout/navigation in `frontend/src/c
 | /reports | Reports | Signed in |
 | /admin/users | Users | Admin |
 | /settings | Settings | Admin |
-| /admin/registry-sync | RegistrySync | Admin |
 | * | Redirect / | Fallback |
 
 Axios interceptors attach localStorage JWT and redirect 401 to login (`frontend/src/lib/api.js:13`).
 AuthContext holds user/role/loading; pages use local useState/useEffect and explicit reload functions. No Redux/query cache is installed (`frontend/src/context/AuthContext.js:6`, `frontend/package.json:5`).
-Shared components: Layout, RegistryTagPicker, and 46 files under components/ui. Picker debounces 300ms and ignores superseded responses; it returns one selected tag (`frontend/src/components/RegistryTagPicker.jsx:8`).
+Shared components: Layout and 46 files under components/ui.
 Cross-repo duplication is conceptual: buttons/cards/dialogs, auth contexts/route guards, dashboards, animal edit forms. Registry uses bespoke TSX primitives, not the same shadcn implementation; no shared package. See sibling `tags-src/frontend/src/components/ui/Button.tsx:1`, `tags-src/frontend/src/components/ProtectedRoute.tsx:1`.
 Low: event-specific forms and payload construction are repeated across create/edit flows, with drift already visible: gift fields exist in EventUpdate but not EventCreate; empty edit strings are omitted (`backend/schemas.py:104`, `:160`; `frontend/src/pages/DailyLogDetail.jsx:318`).
 
@@ -108,12 +104,8 @@ Low: event-specific forms and payload construction are repeated across create/ed
 | High | `backend/models.py:212` | Animal stores local tag, species/category/location/sex, DOB, ancestry, status alongside optional registry_tag_id. |
 | High | `backend/schemas.py:454`, `:469`; `backend/server.py:3071`, `:3191`, `:3336` | Create, CSV import and update accept/write local DOB; update changes status with no Registry write. |
 | Medium | `backend/server.py:2967`, `:3241` | Responses expose local identity; age/untagged filters compute from local DOB. Birth events do not automatically create these individual calf rows. |
-| High | `backend/server.py:3280`; `backend/models.py:231` | Tag assignment persists unchecked, nonunique Registry link before remote result. |
-| Medium | `backend/server.py:3396` | Animal transfer updates local location and aggregate event, without Registry transfer synchronization. |
-| High | `frontend/src/pages/Animals.jsx:168`, `:668` | Local UI authors DOB independently of Registry. |
-| Medium | `backend/server.py:3006`, `:3061`; `frontend/src/pages/Animals.jsx:453`; `frontend/src/pages/RegistrySync.jsx:101` | CSV template invites local DOB entry; list filters/status badges and tagging view consume local identity facts. |
-| High | `backend/registry_sync.py:168`, `:202` | Death/sale request canonical status changes; birth sends CALVED to dam, not calf identity. See integration.md for mismatches. |
-| Medium | `backend/registry_client.py:36` | Derived category aliases lose sex; category mapping is incomplete. |
+| High | `frontend/src/pages/Animals.jsx:168`, `:668` | Local UI authors DOB (the Registry integration no longer exists). |
+| Medium | `backend/server.py:3006`, `:3061`; `frontend/src/pages/Animals.jsx:453` | CSV template invites local DOB entry; list filters/status badges and tagging view consume local identity facts. |
 No Shamba birth_cohort/production_stage column or assignment exists. Category transitions and statuses remain separate concepts; do not retrofit production_stage into AnimalStatus or EventType (`backend/models.py:14`, `:122`). Registry previous/intended statuses are also persisted as delivery metadata, not canonical projections (`backend/models.py:345`); picker state carries a status snapshot (`frontend/src/pages/NewDailyLog.jsx:54`, `frontend/src/pages/DailyLogDetail.jsx:625`).
 
 ## Quality/risk evidence
@@ -121,21 +113,20 @@ No Shamba birth_cohort/production_stage column or assignment exists. Category tr
 - High: many business GETs have no auth; reports can expose event/contact details. CORS/frontend gating is not authorization (`backend/server.py:773`, `:1882`, `:1990`; api.md lists all).
 - High: stock read-modify-write has no lock/atomic increment; concurrent requests can lose adjustments (`backend/server.py:2789`, `:2801`). Negative/zero event counts are not constrained in EventCreate/EventUpdate (`backend/schemas.py:109`, `:142`).
 - Medium: genuine query-per-row in upcoming/list health category resolution; bulk import also queries for each duplicate. Batch these after measuring (`backend/server.py:3735`, `:3785`, `:3200`).
-- Medium: async ORM usage is broadly consistent with awaited I/O and selectinload. Blocking Google auth is the concrete async misuse found; no synchronous Session.query use in Shamba's request path was found (`backend/registry_client.py:151`, `backend/registry_auth.py:55`).
+- Medium: async ORM usage is broadly consistent with awaited I/O and selectinload. no synchronous Session.query use in Shamba's request path was found (`backend/registry_client.py:151`, `backend/registry_auth.py:55`).
 - Low: init_db/get_sample_locations are imported but not called by server; get_current_active_user is unused. Stock arithmetic is duplicated in apply/reverse/replay helpers (`backend/server.py:17`, `:56`, `:2655`, `:2718`, `:2812`; `backend/auth.py:62`).
 - Medium: dependency list includes many packages with no observed production import (e.g. ML/payment clients); installation footprint should be audited, not removed speculatively (`backend/requirements.txt:57`, `:69`, `:113`).
 
 ## Tests and gaps
-- Four registry test modules mock sessions/httpx/Google auth and cover state transitions, retries, request shapes, reports and category aliases (`backend/tests/test_registry_sync.py:93`, `backend/tests/test_registry_client.py:62`, `backend/tests/test_registry_auth.py:19`, `backend/tests/test_registry_report.py:61`).
+- The four mocked registry test modules were deleted with the integration (2026-11-08); no runnable automated backend tests remain (ROADMAP R4).
 - Live requests tests cover disease, CSV and analytics; root backend_test.py is another external API harness (`backend/tests/test_dashboard_analytics.py:15`, `backend/tests/test_csv_import.py:1`, `backend_test.py:332`).
-- High gap: no cross-service test catches CALVED/BIRTH, default death naming, edit-after-send or delete-to-revert. Mock birth test explicitly expects CALVED (`backend/tests/test_registry_sync.py:318`).
-- Medium gap: no PostgreSQL concurrent drain/status/stock test, route transaction rollback test, or schema-evolution test was found. SQLite cannot represent the native JSONB outbox unchanged (`backend/models.py:347`).
+- Medium gap: no PostgreSQL concurrent stock test, route transaction rollback test, or schema-evolution test was found.
 - No frontend test files were found in tracked src; package.json provides the CRA test runner (`frontend/package.json:62`).
 Commands are listed in CLAUDE.md for future authorized work; none were run in this audit.
 
 ## Roadmap and token-saving suggestions
 Dipping/deworming/vaccination intervals and overdue views exist; chemical rotation inventory/selection policy and outbound notifications do not (`backend/models.py:243`, `backend/server.py:3489`; notification backlog `memory/PRD.md:94`).
-No dairy module model/router exists. Recommendation: keep milk/yield/lactation operations here, joined to Registry identity; do not create another DOB/cohort authority.
+No dairy module model/router exists. Recommendation: keep milk/yield/lactation operations here, (dairy is out of scope per owner, 2026-11-08).
 Suggested .claude/settings.json permissions.deny Read rules (proposal only; file not created):
 ```json
 {"permissions":{"deny":["Read(./**/node_modules/**)","Read(./**/build/**)","Read(./**/dist/**)","Read(./**/.venv/**)","Read(./**/__pycache__/**)","Read(./**/.pytest_cache/**)","Read(./**/yarn.lock)","Read(./**/package-lock.json)","Read(./**/*.log)","Read(./**/*.db)","Read(./backend/sampe.txt)","Read(./backend_test_results.json)","Read(./**/.env)"]}}

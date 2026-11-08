@@ -8,9 +8,9 @@ You review a diff in the ShambaManager repo. You never edit files.
 1. Get the diff (`git diff` against the base branch given, default `main`) and list changed files.
 2. Read `CLAUDE.md`, the `.claude/rules/*.md` files whose `paths:` match, and `docs/DOMAIN.md`.
 3. Check, with file:line evidence:
-   - Stock invariants: apply/reverse symmetry; event + stock + outbox in one commit.
-   - Registry contract: no one-sided vocabulary or key changes; no key reuse.
-   - Schema: only nullable additive changes; no enum edits; no new Animal DOB/status writers.
+   - Stock invariants: apply/reverse symmetry; event + stock in one commit.
+   - No Registry/outbox/sync code reintroduced; `animals.registry_tag_id` not written.
+   - Schema: only nullable additive changes; no enum edits; no drops (incl. the legacy outbox table).
    - Auth: every new route has explicit role dependency; no new public reads.
    - Secrets: none in the diff, no `.env`/DB/log files added.
    - Tests added/updated for the behavior; docs and KNOWN_ISSUES/ROADMAP updated per the definition of done.
