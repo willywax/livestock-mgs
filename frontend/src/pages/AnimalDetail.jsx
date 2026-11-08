@@ -14,6 +14,7 @@ import {
   getAnimalTimeline, getAnimalReproductiveHistory, getAnimalBCSHistory,
   getAnimalNotes, createAnimalNote, updateAnimalNote, deleteAnimalNote, getAnimalLocationHistory,
   replaceAnimalTag,
+  getAnimalIdentifiers, createAnimalIdentifier, updateAnimalIdentifier,
 } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -382,6 +383,106 @@ function ReplaceTagDialog({ open, onClose, animal, onReplaced }) {
   );
 }
 
+const IDENTIFIER_LABELS = {
+  eid: 'EID (ISO)', uhf_tag: 'UHF Tag', reader_code: 'Reader / EPC',
+  visual_tag: 'Visual Tag', branding_mark: 'Branding Mark', other: 'Other',
+};
+
+function Identifiers({ animalId, canWrite }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await getAnimalIdentifiers(animalId);
+      setItems(response.data);
+    } catch (err) {
+      setError(errText(err, 'Failed to load identifiers'));
+    } finally {
+      setLoading(false);
+    }
+  }, [animalId]);
+  useEffect(() => { load(); }, [load]);
+  const open = (item) => setForm({
+    id: item?.id, id_type: item?.id_type || 'eid', id_value: item?.id_value || '',
+    recorded_date: item?.recorded_date || '', notes: item?.notes || '',
+  });
+  const save = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const data = { id_value: form.id_value.trim(), recorded_date: form.recorded_date || null, notes: form.notes || null };
+      if (form.id) await updateAnimalIdentifier(animalId, form.id, data);
+      else await createAnimalIdentifier(animalId, { ...data, id_type: form.id_type });
+      setForm(null);
+      toast.success('Identifier saved');
+      await load();
+    } catch (err) {
+      toast.error(errText(err, 'Failed to save identifier'));
+    } finally { setBusy(false); }
+  };
+  const deactivate = async (item) => {
+    setBusy(true);
+    try {
+      await updateAnimalIdentifier(animalId, item.id, { is_active: false });
+      toast.success('Identifier saved');
+      await load();
+    } catch (err) {
+      toast.error(errText(err, 'Failed to deactivate identifier'));
+    } finally { setBusy(false); }
+  };
+  return (
+    <section className="space-y-2 border-t pt-3" aria-label="Identifiers">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold">Identifiers</h2>
+        {canWrite && <Button size="sm" variant="outline" disabled={busy} onClick={() => open(null)}><Plus className="mr-1 h-4 w-4" />Add ID</Button>}
+      </div>
+      {loading ? <Skeleton className="h-16" /> : error ? (
+        <div role="alert" className="text-sm text-red-600">{error}<Button variant="link" onClick={load}>Retry</Button></div>
+      ) : items.length === 0 ? <p className="text-sm text-muted-foreground">No identifiers recorded</p> : (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader><TableRow><TableHead>Type</TableHead><TableHead>Value</TableHead><TableHead>Active</TableHead><TableHead>Recorded</TableHead>{canWrite && <TableHead>Actions</TableHead>}</TableRow></TableHeader>
+            <TableBody>{items.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell className={!item.is_active ? 'line-through' : ''}>{IDENTIFIER_LABELS[item.id_type]}</TableCell>
+                <TableCell className={cn('font-mono break-all', !item.is_active && 'line-through')} title={item.notes || undefined}>{item.id_value}</TableCell>
+                <TableCell>{item.is_active ? <span aria-label="Active">✓</span> : <Badge className="bg-amber-100 text-amber-800">inactive</Badge>}</TableCell>
+                <TableCell className="whitespace-nowrap">{fmt(item.recorded_date)}</TableCell>
+                {canWrite && <TableCell><div className="flex gap-1">
+                  <Button size="icon" variant="ghost" disabled={busy} aria-label={`Edit ${IDENTIFIER_LABELS[item.id_type]}`} onClick={() => open(item)}><Pencil className="h-4 w-4" /></Button>
+                  {item.is_active && <Button size="sm" variant="ghost" disabled={busy} onClick={() => deactivate(item)}>Deactivate</Button>}
+                </div></TableCell>}
+              </TableRow>
+            ))}</TableBody>
+          </Table>
+        </div>
+      )}
+      {canWrite && <Dialog open={!!form} onOpenChange={(value) => { if (!value && !busy) setForm(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{form?.id ? 'Edit identifier' : 'Add identifier'}</DialogTitle><DialogDescription>Record an additional animal ID.</DialogDescription></DialogHeader>
+          {form && <form onSubmit={save} className="space-y-4">
+            <div className="space-y-2"><Label htmlFor="identifier-type">Type</Label>
+              <Select value={form.id_type} disabled={!!form.id || busy} onValueChange={(value) => setForm({ ...form, id_type: value })}>
+                <SelectTrigger id="identifier-type"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(IDENTIFIER_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2"><Label htmlFor="identifier-value">Value</Label><Input id="identifier-value" required maxLength={100} value={form.id_value} disabled={busy} onChange={(e) => setForm({ ...form, id_value: e.target.value })} /></div>
+            <div className="space-y-2"><Label htmlFor="identifier-date">Recorded date (optional)</Label><Input id="identifier-date" type="date" value={form.recorded_date} disabled={busy} onChange={(e) => setForm({ ...form, recorded_date: e.target.value })} /></div>
+            <div className="space-y-2"><Label htmlFor="identifier-notes">Notes (optional)</Label><Textarea id="identifier-notes" value={form.notes} disabled={busy} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+            <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setForm(null)}>Cancel</Button><Button type="submit" disabled={busy || !form.id_value.trim()}>{busy ? 'Saving…' : 'Save'}</Button></DialogFooter>
+          </form>}
+        </DialogContent>
+      </Dialog>}
+    </section>
+  );
+}
+
 function IdentityCard({ animal, canWrite, isAdmin, onReplaceTag }) {
   const navigate = useNavigate();
   return (
@@ -411,6 +512,7 @@ function IdentityCard({ animal, canWrite, isAdmin, onReplaceTag }) {
           )}
           {animal.name && <p className="text-lg text-muted-foreground">{animal.name}</p>}
         </div>
+        <Identifiers key={animal.id} animalId={animal.id} canWrite={canWrite} />
         <div className="flex flex-wrap items-center gap-2">
           <Badge className={SPECIES_BADGE[animal.species]}>{animal.species}</Badge>
           <span className="text-sm">{animal.category_name_sw || '—'}</span>

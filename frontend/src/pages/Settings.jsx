@@ -20,6 +20,54 @@ import {
 import { Gear, Plus, Trash, FirstAid, Cow, Dog, Syringe, PencilSimple } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { SPECIES_CONFIG } from '../lib/utils';
+import { importAnimalIdentifiers } from '../lib/api';
+
+function IdentifierImportCard() {
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  const importFile = async () => {
+    if (!file) return;
+    setBusy(true);
+    setError('');
+    setResult(null);
+    try {
+      const response = await importAnimalIdentifiers(file);
+      setResult(response.data);
+      toast.success('Identifier import complete');
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setError(typeof detail === 'string' ? detail : 'Failed to import identifiers');
+    } finally { setBusy(false); }
+  };
+  return (
+    <Card>
+      <CardHeader><CardTitle>Import baseline identifiers</CardTitle><CardDescription>Upload the Nyigoti baseline CSV to add identifiers to existing animals.</CardDescription></CardHeader>
+      <CardContent className="space-y-4">
+        <Label htmlFor="identifier-csv">Baseline CSV</Label>
+        <Input id="identifier-csv" type="file" accept=".csv,text/csv" disabled={busy} onChange={(e) => {
+          const picked = e.target.files[0];
+          setResult(null);
+          setError('');
+          if (picked && !picked.name.toLowerCase().endsWith('.csv')) {
+            setFile(null); setError('Choose a CSV file'); e.target.value = ''; return;
+          }
+          setFile(picked || null);
+        }} />
+        <Button onClick={importFile} disabled={busy || !file}>{busy ? 'Importing…' : 'Import'}</Button>
+        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+        {result && <div role="status" className="rounded-lg border p-4 space-y-3">
+          <p>Matched {result.matched} animals, added {result.identifiers_added} identifiers, {result.already_existed} already existed</p>
+          {result.unmatched_eids.length > 0 && <details>
+            <summary className="cursor-pointer">{result.unmatched_eids.length} animals not found in register</summary>
+            <ul className="mt-2 max-h-60 overflow-auto list-disc pl-5 font-mono text-sm">{result.unmatched_eids.map((eid, index) => <li key={index}>{eid || '(missing EID short)'}</li>)}</ul>
+          </details>}
+        </div>}
+      </CardContent>
+    </Card>
+  );
+}
 
 function Settings() {
   const { user } = useAuth();
@@ -200,6 +248,8 @@ function Settings() {
         </h1>
         <p className="text-muted-foreground mt-1">Configure system settings and manage diseases</p>
       </div>
+
+      {isAdmin && <IdentifierImportCard />}
 
       <Card className="border-border/60">
         <CardHeader>

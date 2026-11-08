@@ -1,10 +1,11 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List
 from datetime import datetime, date
 from models import (
     UserRole, EventType, SpeciesType, AbortionStage, AnimalSex, AnimalAcquisitionType, AnimalStatus,
     HealthEventType, CategoryScope, VaccineType as VaccineTypeModel,
     ServiceType, PDResult, ReproductiveCycleStatus, CalvingOutcome, NoteType,
+    AnimalIdentifierType,
 )
 
 # Auth schemas
@@ -868,3 +869,49 @@ class ReplaceTagResponse(BaseModel):
     old_tag: str
     new_tag: str
     animal_id: int
+
+
+class AnimalIdentifierCreate(BaseModel):
+    id_type: AnimalIdentifierType
+    id_value: str = Field(min_length=1, max_length=100)
+    is_active: bool = True
+    notes: Optional[str] = None
+    recorded_date: Optional[date] = None
+
+
+class AnimalIdentifierUpdate(BaseModel):
+    id_value: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    is_active: Optional[bool] = None
+    notes: Optional[str] = None
+    recorded_date: Optional[date] = None
+
+    @field_validator("id_value", "is_active")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
+
+
+class AnimalIdentifierResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    animal_id: int
+    id_type: AnimalIdentifierType
+    id_value: str
+    is_active: bool
+    notes: Optional[str]
+    recorded_date: Optional[date]
+    created_at: datetime
+
+
+class AnimalLookupResponse(BaseModel):
+    animal: AnimalResponse
+    matched_id: AnimalIdentifierResponse
+
+
+class AnimalIdentifierImportResult(BaseModel):
+    matched: int
+    identifiers_added: int
+    already_existed: int
+    unmatched_eids: List[str]

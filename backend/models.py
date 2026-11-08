@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime, timezone
 import enum
+from sqlalchemy import func
 
 class UserRole(str, enum.Enum):
     ADMIN = "admin"
@@ -473,3 +474,27 @@ class AnimalLocationHistory(Base):
     animal = relationship("Animal")
     from_location = relationship("Location", foreign_keys=[from_location_id])
     to_location = relationship("Location", foreign_keys=[to_location_id])
+
+
+class AnimalIdentifierType(str, enum.Enum):
+    EID = "eid"
+    UHF_TAG = "uhf_tag"
+    READER_CODE = "reader_code"
+    VISUAL_TAG = "visual_tag"
+    BRANDING_MARK = "branding_mark"
+    OTHER = "other"
+
+
+class AnimalIdentifier(Base):
+    __tablename__ = "animal_identifiers"
+    __table_args__ = (UniqueConstraint("animal_id", "id_type", "id_value"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
+    id_type = Column(SQLEnum(AnimalIdentifierType), nullable=False)
+    id_value = Column(String(100), nullable=False)
+    is_active = Column(Boolean, default=True)
+    notes = Column(Text, nullable=True)
+    recorded_date = Column(Date, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

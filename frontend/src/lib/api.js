@@ -186,3 +186,20 @@ export const replaceAnimalTag = (id, newTagNumber) =>
   api.post(`/animals/${id}/replace-tag`, { new_tag_number: newTagNumber });
 
 export default api;
+
+// Additional animal identifiers and baseline import
+export const getAnimalIdentifiers = (animalId) => api.get(`/animals/${animalId}/identifiers`);
+export const createAnimalIdentifier = (animalId, data) => api.post(`/animals/${animalId}/identifiers`, data);
+export const updateAnimalIdentifier = (animalId, identifierId, data) =>
+  api.put(`/animals/${animalId}/identifiers/${identifierId}`, data);
+export const deleteAnimalIdentifier = (animalId, identifierId) =>
+  api.delete(`/animals/${animalId}/identifiers/${identifierId}`);
+export const lookupAnimalByIdentifier = (idType, idValue) =>
+  api.get('/animals/lookup-by-id', { params: { id_type: idType, id_value: idValue } });
+export const importAnimalIdentifiers = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/admin/import/animal-identifiers', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
