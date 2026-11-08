@@ -94,6 +94,13 @@ All in `backend/server.py` (block "REPRODUCTION & ANIMAL PROFILE", registered be
 | GET | `/api/animals/{id}/timeline` | merged reproduction milestones, matching farm-health events, BCS and notes, newest first |
 | GET | `/api/analytics/reproduction` | filters `location_id`, `year`; rates are 0-1 fractions; Koo = `categories.name_sw == 'Koo'` |
 
+## Frontend pages using these routes (added 2026-11-08)
+- `/reproduction` (`frontend/src/pages/Reproduction.jsx`, all roles; write actions need admin/data_entry, bull assignment admin only): KPI cards (`GET /api/analytics/reproduction` for "All species"; computed in the browser per species), needs-attention list, upcoming and recent births, bull assignments. Uses `GET/POST/PUT /api/reproductive-cycles`, `GET/POST/PUT /api/bull-assignments`, `GET/POST /api/bcs-records`, `GET /api/animals`, `/api/opening-balances`, `/api/stock-levels`.
+- Shared dialogs `frontend/src/components/ReproductionDialogs.jsx` (service, PD check, calving/lambing/kidding, BCS). Only ONE page exists: an animal detail page (photos, notes, timeline, history) is not built yet (ROADMAP R12).
+- Client wrappers appended to `frontend/src/lib/api.js`: `getReproductionAnalytics`, `getReproductiveCycles`, `getReproductiveCycle`, `createReproductiveCycle`, `updateReproductiveCycle`, `getBullAssignments`, `createBullAssignment`, `updateBullAssignment`, `getBCSRecords`, `createBCSRecord`, `searchAnimals`.
+- `GET /api/animals` has no `sex` filter: the page filters female/male client-side.
+- Species-aware UI constants (gestation days, terminology, interval thresholds) live in `ReproductionDialogs.jsx` and are keyed by the API species values `cattle`/`sheep`/`goat`. The backend still defaults expected calving to 283 days for every species (K23); the UI always sends the date explicitly.
+
 ## Schema and auth lookup
 
 - Pydantic contracts: `backend/schemas.py:1`; enum values: `backend/models.py:9`. Request models with optional fields do not necessarily support clearing fields; handlers commonly ignore None.

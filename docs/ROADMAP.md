@@ -8,11 +8,13 @@ Sizes: S = under a day, M = a few days, L = a week or more (estimates, Unverifie
 | R6 | Atomic stock updates and positive-count validation | M | K07 | |
 | R8 | Align deployment: target region, secret bindings, correct README; owner removes obsolete REGISTRY_*/INTERNAL_SYNC_* env vars and any drain scheduler job | S | K11, K20 | Owner decides region |
 | R10 | Frontend tests and CI workflow (needs approval) | M | K15 | |
-| R12 | Frontend for reproduction and animal profile (cycles, bulls, BCS, photos, notes, timeline, analytics); backend exists (decision 0008) | L | K22 | Needs `GCS_BUCKET_NAME` configured for photos |
+| R12 | Animal detail page for reproduction/profile (photos, notes, timeline, reproductive history); the reproduction dashboard and dialogs are done (branch `ft/repro-frontend`) | M | K22, K24 | Needs `GCS_BUCKET_NAME` configured for photos |
+| R13 | Backend: `species` filter on `/analytics/reproduction` and species-aware gestation default (sheep 147, goat 150) instead of the 283-day constant; then drop the browser-side species KPI maths | S | K23, K24 | Additive backend change |
 | R11 | Chemical rotation policy/inventory and notifications | L | PRD backlog | |
 
 Done 2026-11-08: R1 (close unauthenticated reads) on `ft/r1-auth-hardening`; follow-up K21 needs a frontend change.
-Done 2026-11-08: backend reproduction/animal-profile schema and routes (branch `ft/repro-schema`, decision 0008). Follow-ups: R12 frontend for reproduction/profile; K22 verify on the PostgreSQL test DB and a real GCS bucket.
+Done 2026-11-08: backend reproduction/animal-profile schema and routes (branch `ft/repro-schema`, decision 0008). Follow-ups: R12 animal detail page; R13 backend species support; K22 verify on the PostgreSQL test DB and a real GCS bucket.
+Done 2026-11-08: Reproduction dashboard page and shared dialogs (branch `ft/repro-frontend`).
 
 Removed from the roadmap 2026-11-08 (obsolete after the Registry integration was removed): former R3 (wire vocabulary), R5 (correction/deletion of synced events), R7 (drain scheduler/reconciliation), R9 (Registry identity ownership).
 
