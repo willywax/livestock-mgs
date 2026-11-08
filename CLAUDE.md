@@ -4,11 +4,11 @@ The Herd Tag Registry integration was REMOVED (docs/decisions/0007). Table `regi
 Snapshot facts come from source; deployment state is Unverified. Standalone summary for other AI sessions: [PROJECT_CONTEXT](docs/PROJECT_CONTEXT.md).
 
 ## Commands
-Configure `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `REACT_APP_BACKEND_URL` via the shell/environment. Never paste values into files, docs or chat.
+Configure `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `REACT_APP_BACKEND_URL` (and optionally `GCS_BUCKET_NAME` for animal photos) via the shell/environment. Never paste values into files, docs or chat.
 | Purpose | Command (from) | Status |
 |---|---|---|
 | Import smoke test | `python -c "import server"` (backend; set dummy `DATABASE_URL` and `JWT_SECRET` in the shell first) | works (2026-11-08). Starts nothing and connects to nothing, but proves imports/routes load. Other test modules are live-HTTP (off-limits) |
-| Backend tests | `cd backend && python -m pytest tests/test_auth.py tests/test_stock.py tests/test_events.py -q` (backend) | works (2026-11-08): 45 passed in ~4s (21 test functions). SQLite in-memory via aiosqlite, `httpx.ASGITransport`, no server/network/Neon; needs `pytest-asyncio`. Does NOT validate PostgreSQL enums/JSONB/locking |
+| Backend tests | `cd backend && python -m pytest tests/test_auth.py tests/test_stock.py tests/test_events.py tests/test_reproduction.py -q` (backend) | works (2026-11-08): 80 passed in ~8s (40 test functions; the original three modules alone give 45). SQLite in-memory via aiosqlite, `httpx.ASGITransport`, no server/network/Neon; needs `pytest-asyncio`. Does NOT validate PostgreSQL enums/JSONB/locking |
 | Syntax lint | `python -m flake8 --select=E9,F63,F7,F82 .` (backend) | works (0 findings). Full flake8 has ~1,270 style findings: no baseline, do not "fix" them |
 | Test DB | `docker compose -f docker-compose.test.yml up -d --wait` then `down -v` | not verified (Docker daemon was off). Port 5433, loopback only, no password |
 | Backend run | `python -m uvicorn server:app --reload --port 8000` (backend) | denied for Claude in settings; the user runs it. Needs a reachable DB and runs DDL + seeding: use the test DB only |

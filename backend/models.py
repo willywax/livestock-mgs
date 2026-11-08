@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Date, Float, JSON, Enum as SQLEnum, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Date, Float, JSON, Numeric, Enum as SQLEnum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime, timezone
@@ -312,3 +312,144 @@ class VaccineType(Base):
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
     creator = relationship("User", foreign_keys=[created_by])
+
+
+# ==================== REPRODUCTION & ANIMAL PROFILE ====================
+# New tables only (created by create_all). Existing tables/enums are untouched.
+class ServiceType(str, enum.Enum):
+    NATURAL = "natural"
+    AI = "ai"
+
+
+class PDResult(str, enum.Enum):
+    PREGNANT = "pregnant"
+    OPEN = "open"
+    REPEAT = "repeat"
+
+
+class ReproductiveCycleStatus(str, enum.Enum):
+    OPEN = "open"
+    SERVED = "served"
+    PREGNANT = "pregnant"
+    CALVED = "calved"
+    ABORTED = "aborted"
+
+
+class CalvingOutcome(str, enum.Enum):
+    LIVE_CALF = "live_calf"
+    STILLBIRTH = "stillbirth"
+    ABORTION = "abortion"
+    ASSISTED_LIVE = "assisted_live"
+    ASSISTED_DEAD = "assisted_dead"
+
+
+class NoteType(str, enum.Enum):
+    OBSERVATION = "observation"
+    WEIGHT = "weight"
+    MEASUREMENT = "measurement"
+    INCIDENT = "incident"
+    HEALTH = "health"
+    OTHER = "other"
+
+
+class BullAssignment(Base):
+    """A bull (Animal) running with a location for a period; removed_date null = still assigned."""
+    __tablename__ = "bull_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bull_animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False)
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
+    assigned_date = Column(Date, nullable=False)
+    removed_date = Column(Date, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    bull = relationship("Animal", foreign_keys=[bull_animal_id])
+    location = relationship("Location")
+
+    __table_args__ = (UniqueConstraint('bull_animal_id', 'location_id', 'assigned_date', name='uq_bull_assignment'),)
+
+
+class ReproductiveCycle(Base):
+    """One service/pregnancy/calving cycle for a female animal."""
+    __tablename__ = "reproductive_cycles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
+    cycle_number = Column(Integer, nullable=False)
+    bull_assignment_id = Column(Integer, ForeignKey("bull_assignments.id"), nullable=True)
+    service_date = Column(Date, nullable=True)
+    service_type = Column(SQLEnum(ServiceType), default=ServiceType.NATURAL, nullable=True)
+    pd_check_date = Column(Date, nullable=True)
+    pd_result = Column(SQLEnum(PDResult), nullable=True)
+    pd_months_pregnant = Column(Integer, nullable=True)
+    expected_calving_date = Column(Date, nullable=True)
+    actual_calving_date = Column(Date, nullable=True)
+    calving_outcome = Column(SQLEnum(CalvingOutcome), nullable=True)
+    calf_sex = Column(SQLEnum(AnimalSex), nullable=True)
+    calf_animal_id = Column(Integer, ForeignKey("animals.id"), nullable=True)
+    abortion_stage = Column(SQLEnum(AbortionStage), nullable=True)
+    bcs_at_service = Column(Numeric(3, 1), nullable=True)   # 1.0-5.0
+    bcs_at_calving = Column(Numeric(3, 1), nullable=True)   # 1.0-5.0
+    calving_interval_days = Column(Integer, nullable=True)  # computed on save
+    days_to_service = Column(Integer, nullable=True)        # computed on save
+    status = Column(SQLEnum(ReproductiveCycleStatus), default=ReproductiveCycleStatus.OPEN, nullable=False)
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    animal = relationship("Animal", foreign_keys=[animal_id])
+    bull_assignment = relationship("BullAssignment")
+    calf = relationship("Animal", foreign_keys=[calf_animal_id])
+
+    __table_args__ = (UniqueConstraint('animal_id', 'cycle_number', name='uq_repro_cycle'),)
+
+
+class BCSRecord(Base):
+    """Body condition score (1.0-5.0) for an animal on a date."""
+    __tablename__ = "bcs_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
+    score_date = Column(Date, nullable=False)
+    bcs = Column(Numeric(3, 1), nullable=False)
+    scored_by = Column(String(255), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    animal = relationship("Animal")
+
+
+class AnimalPhoto(Base):
+    """Metadata for a photo stored in Google Cloud Storage (object path only, never a URL)."""
+    __tablename__ = "animal_photos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
+    gcs_path = Column(String(500), nullable=False)
+    caption = Column(String(255), nullable=True)
+    taken_date = Column(Date, nullable=True)
+    is_primary = Column(Boolean, default=False, nullable=False)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    animal = relationship("Animal")
+
+
+class AnimalNote(Base):
+    """Free-text profile note on an animal (observation, weight, incident...)."""
+    __tablename__ = "animal_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
+    note_date = Column(Date, nullable=False)
+    note_type = Column(SQLEnum(NoteType), default=NoteType.OBSERVATION, nullable=False)
+    content = Column(Text, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    animal = relationship("Animal")

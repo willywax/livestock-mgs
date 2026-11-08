@@ -11,8 +11,8 @@ Line numbers quoted from the repo analysis drift quickly; treat them as hints an
 - Users (roles): `admin`, `data_entry` (office staff entering logs), `viewer` (read-only). Login is by phone number + password (JWT).
 - Status: actively developed, in use (Unverified: the repo's deploy guide names live domains, but no deployment was inspected).
 - Last updated: 2026-11-08.
-- Branch/commit: working branch `ft/r1-auth-hardening` at `84978f2` ("Docs: record auth hardening..."); working tree has UNCOMMITTED changes (the new backend test suite, its docs/rule edits and one requirements line), stacked on `chore/remove-registry`, stacked on `chore/claude-setup`, which was created from `main` at `9b72555` ("Support registry tag edits and birth counts by sex"); `main` was 4 commits ahead of `origin/main`. Local branches `ft-edit-event` (same commit as main), `ft-schedule` and `new-ft` appear stale/merged (Unverified). The setup commits (untracked env/DB/log files, Claude config, docs) sit on `chore/claude-setup`; the Registry removal sits on `chore/remove-registry`; the auth hardening sits on `ft/r1-auth-hardening`; nothing is pushed or merged. Planned merge order: chore/claude-setup, chore/remove-registry, ft/r1-auth-hardening, then main.
-- No application code was changed by the setup or test work: the test suite only adds files under `backend/tests/` plus `pytest-asyncio` in `backend/requirements.txt`.
+- Branch/commit: working branch `ft/repro-schema` (reproduction/profile backend, created from local `main` at `de065a0`; its changes are not yet committed). Local `main` already contains the Claude setup, the Registry removal, the auth hardening (R1) and the first test suite via fast-forward (2026-11-08); `main` is ~14 commits ahead of `origin/main` and nothing has been pushed. Older local branches `chore/claude-setup`, `chore/remove-registry`, `ft/r1-auth-hardening` are ancestors of `main`; `ft-edit-event`, `ft-schedule`, `new-ft` appear stale/merged (Unverified).
+- Application code changed only for the reproduction/animal-profile backend (branch `ft/repro-schema`, from `main` at `de065a0`): 5 new tables, 5 new enums, 24 new routes, no existing class/column/route/enum modified. Frontend untouched.
 
 ## 3. Tech stack
 | Layer | Technology (versions from `backend/requirements.txt`, `frontend/package.json`) |
@@ -43,7 +43,7 @@ livestock-mgs/
     auth.py                 JWT, password hashing, require_roles
     seed_data.py            default categories (Swahili names), bootstrap data
     requirements.txt, Dockerfile, .dockerignore
-    tests/                  conftest.py + test_auth/test_stock/test_events (SQLite in-memory, runnable) + 3 live-HTTP modules (off-limits)
+    tests/                  conftest.py + test_auth/test_stock/test_events/test_reproduction (SQLite in-memory, runnable) + 3 live-HTTP modules (off-limits)
   frontend/
     src/App.js              all routes; src/index.js entry
     src/pages/              Dashboard, Locations, LocationDetail, Animals, FarmHealth, DailyLogs,
@@ -90,11 +90,11 @@ Omitted: `.venv`, `node_modules`, `frontend/build`, caches, `.git`. Also present
 **Frontend routes** (`frontend/src/App.js`): `/login`, `/`, `/locations`, `/locations/:id`, `/animals`, `/farm-health`, `/daily-logs`, `/daily-logs/new`, `/daily-logs/:id`, `/opening-balances`, `/reports`, `/admin/users`, `/settings`.
 
 ## 6. Data model
-Tables (all in `backend/models.py`; full column list in `docs/context/data-model.md`): `users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types` (12). A legacy table `registry_sync_outbox` still exists in the database without a model (inert; never drop).
+Tables (all in `backend/models.py`; full column list in `docs/context/data-model.md`): `users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types` (12), plus the reproduction/profile tables `bull_assignments`, `reproductive_cycles`, `bcs_records`, `animal_photos`, `animal_notes` (17 in total; decision 0008). A legacy table `registry_sync_outbox` still exists in the database without a model (inert; never drop).
 
 Relationships (summary): a DailyLog belongs to a Location and has many Events; Events and OpeningBalances and StockLevels reference Location + Category + species; Animals reference Location + Category and carry a nullable inert legacy `registry_tag_id` string; FarmHealthEvents reference Location (and categories as JSON).
 
-Enums (native PostgreSQL enums, values lowercase): UserRole {admin,data_entry,viewer}; EventType {birth, death, sold, missing, gift_in, gift_out, bought, transfer, category_change, abortion, weaning}; SpeciesType {cattle,sheep,goat}; AnimalStatus {active,sold,dead,transferred,missing}; AnimalSex {male,female}; HealthEventType {dipping,vaccination,deworming,log}.
+Enums (native PostgreSQL enums; Python/API values are lowercase but the database stores the uppercase member NAMES): UserRole {admin,data_entry,viewer}; EventType {birth, death, sold, missing, gift_in, gift_out, bought, transfer, category_change, abortion, weaning}; SpeciesType {cattle,sheep,goat}; AnimalStatus {active,sold,dead,transferred,missing}; AnimalSex {male,female}; HealthEventType {dipping,vaccination,deworming,log}; new: ServiceType {natural,ai}, PDResult {pregnant,open,repeat}, ReproductiveCycleStatus {open,served,pregnant,calved,aborted}, CalvingOutcome {live_calf,stillbirth,abortion,assisted_live,assisted_dead}, NoteType {observation,weight,measurement,incident,health,other}.
 
 Rules that must always hold
 - Stock is per Location + Species + Category; `stock_levels` must equal opening balance + applied events (recompute is the repair path).
@@ -129,13 +129,13 @@ Domain: counts-based livestock inventory for cattle, sheep and goats across mult
 Conventions: lowercase local enums; sex-specific categories. Persisted category names come from `backend/seed_data.py`: do not rename casually. More terms: `docs/context/glossary.md`.
 
 ## 8. Commands
-Never put real values for env vars into commands or docs. Names: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `REACT_APP_BACKEND_URL`; frontend tooling `ENABLE_HEALTH_CHECK`, `ENABLE_VISUAL_EDITS`, `WDS_SOCKET_PORT`; container `PORT`. Obsolete and inert (owner may remove from Cloud Run): `REGISTRY_BASE_URL`, `REGISTRY_AUDIENCE`, `REGISTRY_DEATH_STATUS`, `REGISTRY_SOLD_STATUS`, `INTERNAL_SYNC_AUDIENCE`, `SYNC_ALLOWED_SERVICE_ACCOUNTS`.
+Never put real values for env vars into commands or docs. Names: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `REACT_APP_BACKEND_URL`, `GCS_BUCKET_NAME` (optional; animal photos); frontend tooling `ENABLE_HEALTH_CHECK`, `ENABLE_VISUAL_EDITS`, `WDS_SOCKET_PORT`; container `PORT`. Obsolete and inert (owner may remove from Cloud Run): `REGISTRY_BASE_URL`, `REGISTRY_AUDIENCE`, `REGISTRY_DEATH_STATUS`, `REGISTRY_SOLD_STATUS`, `INTERNAL_SYNC_AUDIENCE`, `SYNC_ALLOWED_SERVICE_ACCOUNTS`.
 
 | Purpose | Command (from) | Status |
 |---|---|---|
 | Backend install | `python -m pip install -r requirements.txt` (backend) | not verified (an existing `.venv` already had the packages) |
 | Import smoke test | `python -c "import server"` (backend; dummy `DATABASE_URL`/`JWT_SECRET` set in the shell) | **verified** 2026-11-08 (starts nothing, connects to nothing). See next row for the automated suite |
-| Backend tests | `cd backend && python -m pytest tests/test_auth.py tests/test_stock.py tests/test_events.py -q` (backend) | **verified** 2026-11-08: 45 passed (21 functions) in 4-10s depending on machine load. SQLite in-memory (aiosqlite), `httpx.ASGITransport`, fixed `JWT_SECRET=test-secret-key`, function-scoped DB; needs `pytest-asyncio`. Not valid evidence for PG enums/JSONB/locking. Do not include the live-HTTP modules |
+| Backend tests | `cd backend && python -m pytest tests/test_auth.py tests/test_stock.py tests/test_events.py tests/test_reproduction.py -q` (backend) | **verified** 2026-11-08: 80 passed (40 functions) in ~8s (the original three modules alone: 45 passed). SQLite in-memory (aiosqlite), `httpx.ASGITransport`, fixed `JWT_SECRET=test-secret-key`, function-scoped DB; needs `pytest-asyncio`. Not valid evidence for PG enums/JSONB/locking. Do not include the live-HTTP modules |
 | Python syntax-level lint | `python -m flake8 --select=E9,F63,F7,F82 .` (backend) | **verified**: 0 findings. Full `flake8 .` reports ~1,270 style findings, so there is no baseline |
 | Test database | `docker compose -f docker-compose.test.yml up -d --wait`, later `... down -v` (repo root) | not verified: Docker daemon was not running. Loopback port 5433, no password; set `DATABASE_URL` in the shell |
 | Backend run | `python -m uvicorn server:app --reload --port 8000` (backend) | not verified (a startup attempt against a dead DB port failed as expected). Runs DDL + seeding; denied for Claude in settings, the user runs it, test DB only |
@@ -172,8 +172,8 @@ Everything below is in the repo on branch `chore/claude-setup` (not yet merged).
 
 ## 10. Current work
 Recent commits on `main` (newest first): `9b72555` Support registry tag edits and birth counts by sex; `114b280`, `4baae11` changes to tags; `9c52010` view extra details in edit logs; `56f3558` logs and vaccines; `f1f227e` animals. The Registry work in those commits was removed on branch `chore/remove-registry`. Most-changed files before that: `backend/server.py`, `backend/schemas.py`, `frontend/src/pages/NewDailyLog.jsx`, `DailyLogDetail.jsx`, `frontend/src/lib/api.js`.
-In progress: three stacked, unmerged branches (see section 2); the first backend test suite (auth, stock helpers, events; SQLite in-memory) is written but uncommitted. `ft/r1-auth-hardening` (latest) put JWT auth on 13 previously open GET routes; health, login and three CSV template downloads stay public (K21). Next candidates: ROADMAP R2 (fail-closed secrets, owner rotates credentials), R4 remainder (Postgres-backed tests, wider route coverage). No other open tasks identified (Unverified: no tracker).
-Known issues: `docs/KNOWN_ISSUES.md` (open: K01, K07, K11, K14-K21; K02 closed on ft/r1-auth-hardening; K03-K06, K08-K10, K12-K13 resolved by the removal). Headline themes only: credential hygiene, public CSV templates (K21), concurrency, thin test coverage (SQLite suite only for auth/stock/events), and inert legacy Registry data to clean up by the owner. Credentials that were once committed must be rotated by the owner.
+In progress: the backend reproduction/animal-profile schema and routes (5 tables, 24 routes; decision 0008) on `ft/repro-schema`, with no frontend yet (ROADMAP R12). R1 auth hardening put JWT auth on 13 previously open GET routes; health, login and three CSV template downloads stay public (K21). Next candidates: ROADMAP R2 (fail-closed secrets, owner rotates credentials), R4 remainder (Postgres-backed tests), R12 frontend, K22 verification on a real PostgreSQL DB and GCS bucket. No other open tasks identified (Unverified: no tracker).
+Known issues: `docs/KNOWN_ISSUES.md` (open: K01, K07, K11, K14-K22; K02 closed on ft/r1-auth-hardening; K03-K06, K08-K10, K12-K13 resolved by the removal). Headline themes only: credential hygiene, public CSV templates (K21), concurrency, thin test coverage (SQLite suite only for auth/stock/events), and inert legacy Registry data to clean up by the owner. Credentials that were once committed must be rotated by the owner.
 
 ## 11. Roadmap
 Full table: `docs/ROADMAP.md` (sizes are estimates, Unverified). Dairy is out of scope (owner decision).
@@ -183,6 +183,7 @@ Full table: `docs/ROADMAP.md` (sizes are estimates, Unverified). Dairy is out of
 4. R8 Align deployment config; owner removes obsolete Registry env vars/scheduler — small.
 5. R10 Frontend tests + CI (needs approval) — medium.
 6. R11 Chemical rotation and notifications — large.
+7. R12 Frontend for reproduction and animal profile (backend done, decision 0008) — large.
 
 ## 12. Constraints
 Never, or only with explicit owner approval:
@@ -215,5 +216,6 @@ Example prompt:
 7. Negative-stock override, locked-log edits and the admin-only add-event route are now covered by SQLite tests (backend/tests/test_events.py, test_stock.py); other per-route roles beyond `docs/context/api.md` and Postgres-specific behaviour remain Unverified.
 8. Whether `ft-schedule`, `new-ft`, `origin/fx-changes` hold unmerged work.
 9. Owner's must-never-break list beyond what the code and `memory/PRD.md` imply (guess used: stock never negative without admin override, atomic transfers/category changes, locked logs immutable).
-10. Whether CI should be added; roadmap sizes and priorities are estimates.
-11. Whether exposed credentials in git history have been rotated (assumed not).
+10. Reproduction/profile backend (decision 0008): PostgreSQL table/enum creation on a real DB, GCS signed URLs on Cloud Run (needs a signing-capable service account and `GCS_BUCKET_NAME`), real upload/delete: all Unverified (K22).
+11. Whether CI should be added; roadmap sizes and priorities are estimates.
+12. Whether exposed credentials in git history have been rotated (assumed not).

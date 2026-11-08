@@ -209,6 +209,41 @@ erDiagram
 
 Diagram shows physical foreign keys only. Free-text category/location/status/tag references and JSON arrays do not imply relational constraints.
 
+## Reproduction and animal profile tables (added 2026-11-08)
+Source: `backend/models.py` (appended block "REPRODUCTION & ANIMAL PROFILE"). New tables only; no existing table, column or enum changed. Created by `create_all` on next startup. PostgreSQL enum labels are the uppercase member NAMES (same as every existing enum); Python/API values are lowercase.
+New enums: `ServiceType {natural, ai}`, `PDResult {pregnant, open, repeat}`, `ReproductiveCycleStatus {open, served, pregnant, calved, aborted}`, `CalvingOutcome {live_calf, stillbirth, abortion, assisted_live, assisted_dead}`, `NoteType {observation, weight, measurement, incident, health, other}`. Reused: `AnimalSex`, `AbortionStage`.
+
+## bull_assignments / BullAssignment
+- `id: Integer ! [PK; IX]`; `bull_animal_id: Integer ! [FK animals.id]`; `location_id: Integer ! [FK locations.id]`.
+- `assigned_date: Date !`; `removed_date: Date ?` (null = still assigned); `notes: Text ?`.
+- `created_by: Integer ? [FK users.id]`; `created_at: DateTime(timezone=True) ? [default=UTC now]`.
+- Constraint: `uq_bull_assignment (bull_animal_id, location_id, assigned_date)`. Relationships: `bull` (Animal), `location`.
+
+## reproductive_cycles / ReproductiveCycle
+- `id: Integer ! [PK; IX]`; `animal_id: Integer ! [FK animals.id; IX]`; `cycle_number: Integer !` (1 = first recorded, MAX+1 per animal; not renumbered on delete).
+- `bull_assignment_id: Integer ? [FK bull_assignments.id]`; `service_date: Date ?`; `service_type: SQLEnum(ServiceType) ? [default NATURAL]`.
+- `pd_check_date: Date ?`; `pd_result: SQLEnum(PDResult) ?`; `pd_months_pregnant: Integer ?`.
+- `expected_calving_date: Date ?` (service_date + 283 days unless supplied); `actual_calving_date: Date ?`; `calving_outcome: SQLEnum(CalvingOutcome) ?`.
+- `calf_sex: SQLEnum(AnimalSex) ?`; `calf_animal_id: Integer ? [FK animals.id]`; `abortion_stage: SQLEnum(AbortionStage) ?`.
+- `bcs_at_service`, `bcs_at_calving: Numeric(3,1) ?` (API validates 1.0-5.0).
+- `calving_interval_days`, `days_to_service: Integer ?` (computed on save from the previous cycle that has an `actual_calving_date`).
+- `status: SQLEnum(ReproductiveCycleStatus) ! [default OPEN]`; `notes: Text ?`; `created_by: Integer ? [FK users.id]`; `created_at`, `updated_at: DateTime(timezone=True)`.
+- Constraint: `uq_repro_cycle (animal_id, cycle_number)`. Relationships: `animal`, `bull_assignment`, `calf`.
+
+## bcs_records / BCSRecord
+- `id: Integer ! [PK; IX]`; `animal_id: Integer ! [FK animals.id; IX]`; `score_date: Date !`; `bcs: Numeric(3,1) !`; `scored_by: String(255) ?`; `notes: Text ?`.
+- `created_by: Integer ? [FK users.id]`; `created_at: DateTime(timezone=True)`.
+
+## animal_photos / AnimalPhoto
+- `id: Integer ! [PK; IX]`; `animal_id: Integer ! [FK animals.id; IX]`; `gcs_path: String(500) !` (object path `animals/{animal_id}/{uuid}.{ext}`, never a URL).
+- `caption: String(255) ?`; `taken_date: Date ?`; `is_primary: Boolean ! [default False]`; `uploaded_by: Integer ? [FK users.id]`; `uploaded_at: DateTime(timezone=True)`.
+
+## animal_notes / AnimalNote
+- `id: Integer ! [PK; IX]`; `animal_id: Integer ! [FK animals.id; IX]`; `note_date: Date !`; `note_type: SQLEnum(NoteType) ! [default OBSERVATION]`; `content: Text !`.
+- `created_by: Integer ? [FK users.id]`; `created_at`, `updated_at: DateTime(timezone=True)`.
+
+Rollback for this change (manual, only if needed and after checking the tables are empty): `DROP TABLE reproductive_cycles, bull_assignments, bcs_records, animal_photos, animal_notes;` then `DROP TYPE servicetype, pdresult, calvingoutcome, reproductivecyclestatus, notetype;`. Do NOT drop `abortionstage` or `animalsex`: existing tables use them.
+
 ## Schema safety and future non-additive changes
 
 - High: startup uses create_all plus a small set of nullable ALTER additions; it does not evolve existing enum types, nullability or constraints (`backend/server.py:98`, `backend/database.py:55`). Alembic is installed but no migration directory/config is present.
