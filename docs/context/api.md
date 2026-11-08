@@ -75,6 +75,25 @@ Auth describes backend enforcement, not frontend visibility. Shamba uses phone/p
 | DELETE | `/api/vaccine-types/{vt_id}` | JWT ADMIN | delete vaccine type | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:4014` |
 | GET | `/api/farm-health-events/last-vaccinations` | JWT active user | get last vaccinations | path/query only -> List[LastVaccinationSummary] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:4035` |
 
+## Reproduction and animal-profile routes (added 2026-11-08)
+All in `backend/server.py` (block "REPRODUCTION & ANIMAL PROFILE", registered before `app.include_router`). Reads: JWT ADMIN/DATA_ENTRY/VIEWER. Writes: ADMIN/DATA_ENTRY. Deletes: ADMIN. Behaviour notes live in the handlers' docstrings and docs/decisions/0008.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/bull-assignments` | filters `location_id`, `active_only`; POST needs a MALE bull (400), existing location (404), unique (bull, location, date) else 409 |
+| PUT/DELETE | `/api/bull-assignments/{id}` | DELETE returns 409 while reproductive cycles reference it |
+| GET/POST | `/api/reproductive-cycles` | filters `animal_id`, `location_id`, `status`, `date_from`, `date_to` (first set date of the cycle); POST needs a FEMALE animal (400/404), assigns `cycle_number`, computes expected calving (+283 d) and intervals |
+| GET/PUT/DELETE | `/api/reproductive-cycles/{id}` | PUT recomputes expected date/intervals (and following cycles); explicit null clears nullable fields |
+| GET | `/api/animals/{id}/reproductive-history` | cycles + `total_calvings`, `avg_interval_days`, `last_calving_date`, `current_status` |
+| GET/POST | `/api/bcs-records` | filters `animal_id`, `location_id`, `date_from`, `date_to`; bcs validated 1.0-5.0 (422) |
+| PUT/DELETE | `/api/bcs-records/{id}` | |
+| GET/POST | `/api/animals/{id}/photos` | GET: signed 1 h URLs, `photo_url=null` + `warning` when GCS is not configured; POST multipart (`file`, `caption`, `taken_date`): jpeg/png/webp, 10 MB, content sniffed; 503 without `GCS_BUCKET_NAME` |
+| PUT/DELETE | `/api/animals/{id}/photos/{photo_id}` | PUT may set `is_primary` (unsets the others); DELETE removes the object first, 502 and keeps the row if storage fails |
+| GET/POST | `/api/animals/{id}/notes` | newest first |
+| PUT/DELETE | `/api/animals/{id}/notes/{note_id}` | |
+| GET | `/api/animals/{id}/timeline` | merged reproduction milestones, matching farm-health events, BCS and notes, newest first |
+| GET | `/api/analytics/reproduction` | filters `location_id`, `year`; rates are 0-1 fractions; Koo = `categories.name_sw == 'Koo'` |
+
 ## Schema and auth lookup
 
 - Pydantic contracts: `backend/schemas.py:1`; enum values: `backend/models.py:9`. Request models with optional fields do not necessarily support clearing fields; handlers commonly ignore None.

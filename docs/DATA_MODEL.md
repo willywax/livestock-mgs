@@ -1,8 +1,8 @@
 # Data model
 Every column, constraint and an ER diagram: [context/data-model.md](context/data-model.md). Source: `backend/models.py`.
 
-## Entities (12 tables in models.py)
-`users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types`.
+## Entities (17 tables in models.py)
+`users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types`, and (reproduction/profile, added 2026-11-08) `bull_assignments`, `reproductive_cycles`, `bcs_records`, `animal_photos`, `animal_notes`.
 Legacy: table `registry_sync_outbox` still exists in existing databases but has no model; never drop it in routine work.
 
 ## Invariants
@@ -12,7 +12,8 @@ Legacy: table `registry_sync_outbox` still exists in existing databases but has 
 - Aggregate counts and the individual `animals` register are separate; a birth event does not create an Animal row.
 - `animals.registry_tag_id` is an inert legacy nullable column: echoed in responses, never written by code. Local Animal `birth_date`/`status` are Shamba's own data again.
 - `events.animal_tags` / `offspring_tags` / `mother_tag` are plain comma-separated text.
-- Enums are native PostgreSQL enums with lowercase values (UserRole, EventType, SpeciesType, AnimalStatus, AnimalSex, HealthEventType...).
+- Enums are native PostgreSQL enums. The database stores the uppercase member NAMES (e.g. `ADMIN`, `LIVE_CALF`); Python/API values are lowercase.
+- Reproduction: one `reproductive_cycles` row per service/pregnancy/calving of a FEMALE animal (`cycle_number` per animal); `calving_interval_days`/`days_to_service` are derived from the previous calved cycle; bull assignments reference a MALE animal. Photos store only a GCS object path.
 
 ## Migration rules (current policy)
 - Only nullable `ADD COLUMN IF NOT EXISTS`, and new tables after review. Never drop/rename/retype/tighten.

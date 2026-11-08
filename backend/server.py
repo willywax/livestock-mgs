@@ -1,14 +1,19 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_, text
+from sqlalchemy import select, func, and_, or_, text, update
+from sqlalchemy.exc import IntegrityError
+from starlette.concurrency import run_in_threadpool
+from pydantic import ValidationError
 from sqlalchemy.orm import selectinload
 import os
 import logging
 import csv
 import io
+import uuid
+from decimal import Decimal
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime, date, timezone, timedelta
@@ -20,6 +25,8 @@ from models import (
     Animal, AnimalSex, AnimalAcquisitionType, AnimalStatus,
     HealthEventType, CategoryScope, HealthInterval, FarmHealthEvent as FarmHealthEventModel,
     VaccineType,
+    BullAssignment, ReproductiveCycle, BCSRecord, AnimalPhoto, AnimalNote,
+    ReproductiveCycleStatus, CalvingOutcome, PDResult,
 )
 from schemas import (
     UserLogin, UserCreate, UserUpdate, UserResponse, TokenResponse,
@@ -40,6 +47,12 @@ from schemas import (
     CategoryInfo, LastEventSummary,
     VaccineTypeCreate, VaccineTypeUpdate, VaccineTypeResponse,
     LastVaccinationSummary,
+    BullAssignmentCreate, BullAssignmentUpdate, BullAssignmentResponse,
+    ReproductiveCycleCreate, ReproductiveCycleUpdate, ReproductiveCycleResponse, AnimalReproductiveSummary,
+    BCSRecordCreate, BCSRecordUpdate, BCSRecordResponse,
+    AnimalPhotoCreate, AnimalPhotoUpdate, AnimalPhotoResponse,
+    AnimalNoteCreate, AnimalNoteUpdate, AnimalNoteResponse,
+    TimelineItem, LocationReproductionMetrics, ReproductionAnalyticsResponse,
 )
 from auth import (
     verify_password, get_password_hash, create_access_token,
@@ -3957,6 +3970,886 @@ async def get_last_vaccinations(
 
     summaries.sort(key=_sort_key)
     return summaries
+
+# ==================== REPRODUCTION & ANIMAL PROFILE ====================
+# Added with the reproduction schema (docs/decisions/0008). Registered BEFORE
+# app.include_router(api_router) below: routes added after that call are not served.
+_ANY_ROLE = (UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)
+GESTATION_DAYS = 283
+ALLOWED_PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
+
+
+class _GCSUnavailable(Exception):
+    """GCS_BUCKET_NAME unset or google-cloud-storage not installed."""
+
+
+def _to_decimal(value: Optional[float]) -> Optional[Decimal]:
+    return None if value is None else Decimal(str(round(value, 1)))
+
+
+async def _require_animal(
+    db: AsyncSession, animal_id: int, sex: Optional[AnimalSex] = None, sex_detail: str = ""
+) -> Animal:
+    result = await db.execute(select(Animal).where(Animal.id == animal_id))
+    animal = result.scalar_one_or_none()
+    if not animal:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    if sex is not None and animal.sex != sex:
+        raise HTTPException(status_code=400, detail=sex_detail or f"Animal must be {sex.value}")
+    return animal
+
+
+async def _require_location(db: AsyncSession, location_id: int) -> None:
+    result = await db.execute(select(Location.id).where(Location.id == location_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+
+# ---------- Bull assignments ----------
+_BA_LOAD = (selectinload(BullAssignment.bull), selectinload(BullAssignment.location))
+
+
+def _ba_response(ba: BullAssignment) -> BullAssignmentResponse:
+    return BullAssignmentResponse(
+        id=ba.id, bull_animal_id=ba.bull_animal_id, location_id=ba.location_id,
+        assigned_date=ba.assigned_date, removed_date=ba.removed_date, notes=ba.notes,
+        created_at=ba.created_at,
+        bull_tag_number=ba.bull.tag_number if ba.bull else None,
+        bull_name=ba.bull.name if ba.bull else None,
+        location_name=ba.location.name if ba.location else None,
+    )
+
+
+async def _load_bull_assignment(db: AsyncSession, ba_id: int) -> BullAssignment:
+    result = await db.execute(
+        select(BullAssignment).options(*_BA_LOAD).where(BullAssignment.id == ba_id)
+    )
+    ba = result.scalar_one_or_none()
+    if not ba:
+        raise HTTPException(status_code=404, detail="Bull assignment not found")
+    return ba
+
+
+@api_router.get("/bull-assignments", response_model=List[BullAssignmentResponse])
+async def list_bull_assignments(
+    location_id: Optional[int] = None,
+    active_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    query = select(BullAssignment).options(*_BA_LOAD)
+    if location_id:
+        query = query.where(BullAssignment.location_id == location_id)
+    if active_only:
+        query = query.where(BullAssignment.removed_date.is_(None))
+    query = query.order_by(BullAssignment.assigned_date.desc(), BullAssignment.id.desc())
+    result = await db.execute(query)
+    return [_ba_response(ba) for ba in result.scalars().all()]
+
+
+@api_router.post("/bull-assignments", response_model=BullAssignmentResponse)
+async def create_bull_assignment(
+    data: BullAssignmentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    await _require_animal(db, data.bull_animal_id, AnimalSex.MALE, "Bull must be a male animal")
+    await _require_location(db, data.location_id)
+    if data.removed_date and data.removed_date < data.assigned_date:
+        raise HTTPException(status_code=400, detail="removed_date cannot be before assigned_date")
+    ba = BullAssignment(**data.model_dump(), created_by=current_user.id)
+    db.add(ba)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="This bull is already assigned to this location on that date")
+    return _ba_response(await _load_bull_assignment(db, ba.id))
+
+
+@api_router.put("/bull-assignments/{assignment_id}", response_model=BullAssignmentResponse)
+async def update_bull_assignment(
+    assignment_id: int,
+    data: BullAssignmentUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    ba = await _load_bull_assignment(db, assignment_id)
+    changes = {k: getattr(data, k) for k in data.model_fields_set}
+    for non_null in ("location_id", "assigned_date"):
+        if changes.get(non_null, 0) is None:
+            changes.pop(non_null)
+    if "location_id" in changes:
+        await _require_location(db, changes["location_id"])
+    new_assigned = changes.get("assigned_date", ba.assigned_date)
+    new_removed = changes.get("removed_date", ba.removed_date)
+    if new_removed and new_removed < new_assigned:
+        raise HTTPException(status_code=400, detail="removed_date cannot be before assigned_date")
+    for key, value in changes.items():
+        setattr(ba, key, value)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="This bull is already assigned to this location on that date")
+    return _ba_response(await _load_bull_assignment(db, assignment_id))
+
+
+@api_router.delete("/bull-assignments/{assignment_id}")
+async def delete_bull_assignment(
+    assignment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    ba = await _load_bull_assignment(db, assignment_id)
+    refs = await db.execute(
+        select(func.count(ReproductiveCycle.id)).where(ReproductiveCycle.bull_assignment_id == assignment_id)
+    )
+    if refs.scalar() > 0:
+        raise HTTPException(status_code=409, detail="Bull assignment is referenced by reproductive cycles")
+    await db.delete(ba)
+    await db.commit()
+    return {"message": "Bull assignment deleted"}
+
+
+# ---------- Reproductive cycles ----------
+_CYCLE_LOAD = (
+    selectinload(ReproductiveCycle.animal).selectinload(Animal.location),
+    selectinload(ReproductiveCycle.bull_assignment).selectinload(BullAssignment.bull),
+)
+_CYCLE_NON_NULL = ("service_type", "status")  # an explicit null in a PUT is ignored for these
+
+
+def _cycle_response(c: ReproductiveCycle) -> ReproductiveCycleResponse:
+    resp = ReproductiveCycleResponse.model_validate(c)
+    resp.animal_tag_number = c.animal.tag_number if c.animal else None
+    resp.location_name = c.animal.location.name if c.animal and c.animal.location else None
+    ba = c.bull_assignment
+    resp.bull_tag_number = ba.bull.tag_number if ba and ba.bull else None
+    return resp
+
+
+async def _load_cycle(db: AsyncSession, cycle_id: int) -> ReproductiveCycle:
+    result = await db.execute(
+        select(ReproductiveCycle).options(*_CYCLE_LOAD).where(ReproductiveCycle.id == cycle_id)
+    )
+    cycle = result.scalar_one_or_none()
+    if not cycle:
+        raise HTTPException(status_code=404, detail="Reproductive cycle not found")
+    return cycle
+
+
+async def _check_cycle_refs(
+    db: AsyncSession, bull_assignment_id: Optional[int], calf_animal_id: Optional[int]
+) -> None:
+    if bull_assignment_id is not None:
+        found = await db.execute(select(BullAssignment.id).where(BullAssignment.id == bull_assignment_id))
+        if found.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Bull assignment not found")
+    if calf_animal_id is not None:
+        await _require_animal(db, calf_animal_id)
+
+
+async def _recompute_cycle_fields(db: AsyncSession, cycle: ReproductiveCycle) -> None:
+    """calving_interval_days / days_to_service from the previous cycle's actual calving date."""
+    result = await db.execute(
+        select(ReproductiveCycle.actual_calving_date)
+        .where(and_(
+            ReproductiveCycle.animal_id == cycle.animal_id,
+            ReproductiveCycle.cycle_number < cycle.cycle_number,
+            ReproductiveCycle.actual_calving_date.isnot(None),
+        ))
+        .order_by(ReproductiveCycle.cycle_number.desc())
+        .limit(1)
+    )
+    prev = result.scalar_one_or_none()
+    cycle.calving_interval_days = (
+        (cycle.actual_calving_date - prev).days if prev and cycle.actual_calving_date else None
+    )
+    cycle.days_to_service = (cycle.service_date - prev).days if prev and cycle.service_date else None
+
+
+async def _refresh_following_cycles(db: AsyncSession, animal_id: int, after_number: int) -> None:
+    result = await db.execute(
+        select(ReproductiveCycle)
+        .where(and_(ReproductiveCycle.animal_id == animal_id, ReproductiveCycle.cycle_number > after_number))
+        .order_by(ReproductiveCycle.cycle_number)
+    )
+    for later in result.scalars().all():
+        await _recompute_cycle_fields(db, later)
+
+
+@api_router.get("/reproductive-cycles", response_model=List[ReproductiveCycleResponse])
+async def list_reproductive_cycles(
+    animal_id: Optional[int] = None,
+    location_id: Optional[int] = None,
+    status: Optional[ReproductiveCycleStatus] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    """date_from/date_to filter on the cycle's first set date (service, PD check or calving)."""
+    query = select(ReproductiveCycle).join(Animal, Animal.id == ReproductiveCycle.animal_id).options(*_CYCLE_LOAD)
+    if animal_id:
+        query = query.where(ReproductiveCycle.animal_id == animal_id)
+    if location_id:
+        query = query.where(Animal.location_id == location_id)
+    if status:
+        query = query.where(ReproductiveCycle.status == status)
+    if date_from or date_to:
+        cycle_date = func.coalesce(
+            ReproductiveCycle.service_date, ReproductiveCycle.pd_check_date, ReproductiveCycle.actual_calving_date
+        )
+        if date_from:
+            query = query.where(cycle_date >= date_from)
+        if date_to:
+            query = query.where(cycle_date <= date_to)
+    query = query.order_by(ReproductiveCycle.animal_id, ReproductiveCycle.cycle_number)
+    result = await db.execute(query)
+    return [_cycle_response(c) for c in result.scalars().all()]
+
+
+@api_router.post("/reproductive-cycles", response_model=ReproductiveCycleResponse)
+async def create_reproductive_cycle(
+    data: ReproductiveCycleCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    await _require_animal(
+        db, data.animal_id, AnimalSex.FEMALE, "Reproductive cycles can only be recorded for female animals"
+    )
+    await _check_cycle_refs(db, data.bull_assignment_id, data.calf_animal_id)
+    max_number = (await db.execute(
+        select(func.max(ReproductiveCycle.cycle_number)).where(ReproductiveCycle.animal_id == data.animal_id)
+    )).scalar()
+    values = data.model_dump()
+    values["bcs_at_service"] = _to_decimal(values["bcs_at_service"])
+    values["bcs_at_calving"] = _to_decimal(values["bcs_at_calving"])
+    if values["service_date"] and not values["expected_calving_date"]:
+        values["expected_calving_date"] = values["service_date"] + timedelta(days=GESTATION_DAYS)
+    cycle = ReproductiveCycle(**values, cycle_number=(max_number or 0) + 1, created_by=current_user.id)
+    db.add(cycle)
+    await db.flush()
+    await _recompute_cycle_fields(db, cycle)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Cycle number conflict, please retry")
+    return _cycle_response(await _load_cycle(db, cycle.id))
+
+
+@api_router.get("/reproductive-cycles/{cycle_id}", response_model=ReproductiveCycleResponse)
+async def get_reproductive_cycle(
+    cycle_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    return _cycle_response(await _load_cycle(db, cycle_id))
+
+
+@api_router.put("/reproductive-cycles/{cycle_id}", response_model=ReproductiveCycleResponse)
+async def update_reproductive_cycle(
+    cycle_id: int,
+    data: ReproductiveCycleUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    cycle = await _load_cycle(db, cycle_id)
+    changes = {k: getattr(data, k) for k in data.model_fields_set}
+    for key in _CYCLE_NON_NULL:
+        if changes.get(key, 0) is None:
+            changes.pop(key)
+    await _check_cycle_refs(db, changes.get("bull_assignment_id"), changes.get("calf_animal_id"))
+    for key in ("bcs_at_service", "bcs_at_calving"):
+        if key in changes:
+            changes[key] = _to_decimal(changes[key])
+    for key, value in changes.items():
+        setattr(cycle, key, value)
+    if "service_date" in changes and "expected_calving_date" not in changes and cycle.service_date:
+        cycle.expected_calving_date = cycle.service_date + timedelta(days=GESTATION_DAYS)
+    if "service_date" in changes or "actual_calving_date" in changes:
+        await _recompute_cycle_fields(db, cycle)
+        await _refresh_following_cycles(db, cycle.animal_id, cycle.cycle_number)
+    await db.commit()
+    return _cycle_response(await _load_cycle(db, cycle_id))
+
+
+@api_router.delete("/reproductive-cycles/{cycle_id}")
+async def delete_reproductive_cycle(
+    cycle_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    cycle = await _load_cycle(db, cycle_id)
+    animal_id, number = cycle.animal_id, cycle.cycle_number
+    await db.delete(cycle)
+    await db.flush()
+    await _refresh_following_cycles(db, animal_id, number)
+    await db.commit()
+    return {"message": "Reproductive cycle deleted"}
+
+
+@api_router.get("/animals/{animal_id}/reproductive-history", response_model=AnimalReproductiveSummary)
+async def get_animal_reproductive_history(
+    animal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    animal = await _require_animal(db, animal_id)
+    result = await db.execute(
+        select(ReproductiveCycle).options(*_CYCLE_LOAD)
+        .where(ReproductiveCycle.animal_id == animal_id)
+        .order_by(ReproductiveCycle.cycle_number)
+    )
+    cycles = result.scalars().all()
+    calved = [c for c in cycles if c.actual_calving_date and c.calving_outcome != CalvingOutcome.ABORTION]
+    intervals = [c.calving_interval_days for c in calved if c.calving_interval_days is not None]
+    return AnimalReproductiveSummary(
+        animal_id=animal.id,
+        tag_number=animal.tag_number,
+        total_calvings=len(calved),
+        avg_interval_days=round(sum(intervals) / len(intervals), 1) if intervals else None,
+        last_calving_date=max((c.actual_calving_date for c in calved), default=None),
+        current_status=cycles[-1].status if cycles else None,
+        cycles=[_cycle_response(c) for c in cycles],
+    )
+
+
+# ---------- BCS records ----------
+def _bcs_response(r: BCSRecord) -> BCSRecordResponse:
+    resp = BCSRecordResponse.model_validate(r)
+    resp.animal_tag_number = r.animal.tag_number if r.animal else None
+    return resp
+
+
+async def _load_bcs(db: AsyncSession, record_id: int) -> BCSRecord:
+    result = await db.execute(
+        select(BCSRecord).options(selectinload(BCSRecord.animal)).where(BCSRecord.id == record_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="BCS record not found")
+    return record
+
+
+@api_router.get("/bcs-records", response_model=List[BCSRecordResponse])
+async def list_bcs_records(
+    animal_id: Optional[int] = None,
+    location_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    query = select(BCSRecord).join(Animal, Animal.id == BCSRecord.animal_id).options(selectinload(BCSRecord.animal))
+    if animal_id:
+        query = query.where(BCSRecord.animal_id == animal_id)
+    if location_id:
+        query = query.where(Animal.location_id == location_id)
+    if date_from:
+        query = query.where(BCSRecord.score_date >= date_from)
+    if date_to:
+        query = query.where(BCSRecord.score_date <= date_to)
+    result = await db.execute(query.order_by(BCSRecord.score_date.desc(), BCSRecord.id.desc()))
+    return [_bcs_response(r) for r in result.scalars().all()]
+
+
+@api_router.post("/bcs-records", response_model=BCSRecordResponse)
+async def create_bcs_record(
+    data: BCSRecordCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    await _require_animal(db, data.animal_id)
+    values = data.model_dump()
+    values["bcs"] = _to_decimal(values["bcs"])
+    record = BCSRecord(**values, created_by=current_user.id)
+    db.add(record)
+    await db.commit()
+    return _bcs_response(await _load_bcs(db, record.id))
+
+
+@api_router.put("/bcs-records/{record_id}", response_model=BCSRecordResponse)
+async def update_bcs_record(
+    record_id: int,
+    data: BCSRecordUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    record = await _load_bcs(db, record_id)
+    for key in data.model_fields_set:
+        value = getattr(data, key)
+        if value is None and key in ("score_date", "bcs"):
+            continue
+        setattr(record, key, _to_decimal(value) if key == "bcs" else value)
+    await db.commit()
+    return _bcs_response(await _load_bcs(db, record_id))
+
+
+@api_router.delete("/bcs-records/{record_id}")
+async def delete_bcs_record(
+    record_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    await db.delete(await _load_bcs(db, record_id))
+    await db.commit()
+    return {"message": "BCS record deleted"}
+
+
+# ---------- Animal photos (Google Cloud Storage) ----------
+def _gcs_bucket():
+    """Sync (run in a thread). google.cloud.storage is imported lazily on purpose."""
+    bucket_name = os.environ.get("GCS_BUCKET_NAME")
+    if not bucket_name:
+        raise _GCSUnavailable("GCS_BUCKET_NAME is not set")
+    try:
+        from google.cloud import storage
+    except ImportError as exc:
+        raise _GCSUnavailable("google-cloud-storage is not installed") from exc
+    return storage.Client().bucket(bucket_name)
+
+
+def _gcs_upload(path: str, data: bytes, content_type: str) -> None:
+    _gcs_bucket().blob(path).upload_from_string(data, content_type=content_type)
+
+
+def _gcs_delete(path: str) -> None:
+    bucket = _gcs_bucket()
+    from google.api_core.exceptions import NotFound
+    try:
+        bucket.blob(path).delete()
+    except NotFound:
+        pass  # already gone: the DB row can still be removed
+
+
+def _gcs_sign_urls(paths: List[str]) -> dict:
+    """1-hour v4 signed GET URLs. Falls back to IAM signing when the credentials have no private key."""
+    bucket = _gcs_bucket()
+    expiry = timedelta(hours=1)
+    iam_args = None
+    urls = {}
+    for path in paths:
+        blob = bucket.blob(path)
+        try:
+            urls[path] = blob.generate_signed_url(version="v4", expiration=expiry, method="GET")
+        except Exception:
+            if iam_args is None:
+                import google.auth
+                from google.auth.transport.requests import Request
+                creds, _ = google.auth.default()
+                creds.refresh(Request())
+                iam_args = {"service_account_email": creds.service_account_email, "access_token": creds.token}
+            urls[path] = blob.generate_signed_url(version="v4", expiration=expiry, method="GET", **iam_args)
+    return urls
+
+
+def _sniff_image_ext(data: bytes) -> Optional[str]:
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+async def _photo_responses(photos: List[AnimalPhoto]) -> List[AnimalPhotoResponse]:
+    responses = [AnimalPhotoResponse.model_validate(p) for p in photos]
+    if not responses:
+        return responses
+    if not os.environ.get("GCS_BUCKET_NAME"):
+        for r in responses:
+            r.warning = "GCS_BUCKET_NAME is not set; photo URLs are unavailable"
+        return responses
+    try:
+        urls = await run_in_threadpool(_gcs_sign_urls, [p.gcs_path for p in photos])
+    except Exception as exc:
+        logger.warning("Photo URL signing failed: %s", type(exc).__name__)
+        for r in responses:
+            r.warning = "Could not generate photo URLs"
+        return responses
+    for r in responses:
+        r.photo_url = urls.get(r.gcs_path)
+    return responses
+
+
+async def _load_photo(db: AsyncSession, animal_id: int, photo_id: int) -> AnimalPhoto:
+    result = await db.execute(
+        select(AnimalPhoto).where(and_(AnimalPhoto.id == photo_id, AnimalPhoto.animal_id == animal_id))
+    )
+    photo = result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return photo
+
+
+@api_router.get("/animals/{animal_id}/photos", response_model=List[AnimalPhotoResponse])
+async def list_animal_photos(
+    animal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    await _require_animal(db, animal_id)
+    result = await db.execute(
+        select(AnimalPhoto).where(AnimalPhoto.animal_id == animal_id)
+        .order_by(AnimalPhoto.is_primary.desc(), AnimalPhoto.uploaded_at.desc(), AnimalPhoto.id.desc())
+    )
+    return await _photo_responses(result.scalars().all())
+
+
+@api_router.post("/animals/{animal_id}/photos", response_model=AnimalPhotoResponse)
+async def upload_animal_photo(
+    animal_id: int,
+    file: UploadFile = File(...),
+    caption: Optional[str] = Form(None),
+    taken_date: Optional[date] = Form(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    await _require_animal(db, animal_id)
+    if not os.environ.get("GCS_BUCKET_NAME"):
+        raise HTTPException(status_code=503, detail="Photo storage is not configured")
+    content_type = (file.content_type or "").lower()
+    declared_ext = ALLOWED_PHOTO_TYPES.get(content_type)
+    if declared_ext is None:
+        raise HTTPException(status_code=415, detail="Only image/jpeg, image/png and image/webp are accepted")
+    data = await file.read(MAX_PHOTO_BYTES + 1)
+    if len(data) > MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=413, detail="Photo exceeds the 10 MB limit")
+    ext = _sniff_image_ext(data)
+    if ext is None or ext != declared_ext:
+        raise HTTPException(status_code=415, detail="File content does not match an allowed image type")
+    try:
+        meta = AnimalPhotoCreate(caption=caption, taken_date=taken_date)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_url=False, include_context=False))
+
+    path = f"animals/{animal_id}/{uuid.uuid4()}.{ext}"
+    try:
+        await run_in_threadpool(_gcs_upload, path, data, content_type)
+    except _GCSUnavailable as exc:
+        raise HTTPException(status_code=503, detail=f"Photo storage is unavailable: {exc}")
+    except Exception as exc:
+        logger.warning("Photo upload failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Photo upload to storage failed")
+
+    existing = (await db.execute(
+        select(func.count(AnimalPhoto.id)).where(AnimalPhoto.animal_id == animal_id)
+    )).scalar()
+    photo = AnimalPhoto(
+        animal_id=animal_id, gcs_path=path, caption=meta.caption, taken_date=meta.taken_date,
+        is_primary=(existing == 0), uploaded_by=current_user.id,
+    )
+    db.add(photo)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        try:
+            await run_in_threadpool(_gcs_delete, path)  # best effort: avoid an orphaned object
+        except Exception:
+            logger.warning("Could not remove orphaned photo object after DB failure")
+        raise
+    return (await _photo_responses([photo]))[0]
+
+
+@api_router.put("/animals/{animal_id}/photos/{photo_id}", response_model=AnimalPhotoResponse)
+async def update_animal_photo(
+    animal_id: int,
+    photo_id: int,
+    data: AnimalPhotoUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    photo = await _load_photo(db, animal_id, photo_id)
+    if "caption" in data.model_fields_set:
+        photo.caption = data.caption
+    if "taken_date" in data.model_fields_set:
+        photo.taken_date = data.taken_date
+    if data.is_primary is not None:
+        if data.is_primary:
+            await db.execute(
+                update(AnimalPhoto)
+                .where(and_(AnimalPhoto.animal_id == animal_id, AnimalPhoto.id != photo_id))
+                .values(is_primary=False)
+            )
+        photo.is_primary = data.is_primary
+    await db.commit()
+    return (await _photo_responses([photo]))[0]
+
+
+@api_router.delete("/animals/{animal_id}/photos/{photo_id}")
+async def delete_animal_photo(
+    animal_id: int,
+    photo_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    photo = await _load_photo(db, animal_id, photo_id)
+    try:
+        await run_in_threadpool(_gcs_delete, photo.gcs_path)  # object first; keep the row if this fails
+    except _GCSUnavailable as exc:
+        raise HTTPException(status_code=503, detail=f"Photo storage is unavailable: {exc}")
+    except Exception as exc:
+        logger.warning("Photo delete failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Could not delete the photo from storage")
+    await db.delete(photo)
+    await db.commit()
+    return {"message": "Photo deleted"}
+
+
+# ---------- Animal notes ----------
+async def _load_note(db: AsyncSession, animal_id: int, note_id: int) -> AnimalNote:
+    result = await db.execute(
+        select(AnimalNote).where(and_(AnimalNote.id == note_id, AnimalNote.animal_id == animal_id))
+    )
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note
+
+
+@api_router.get("/animals/{animal_id}/notes", response_model=List[AnimalNoteResponse])
+async def list_animal_notes(
+    animal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    await _require_animal(db, animal_id)
+    result = await db.execute(
+        select(AnimalNote).where(AnimalNote.animal_id == animal_id)
+        .order_by(AnimalNote.note_date.desc(), AnimalNote.id.desc())
+    )
+    return [AnimalNoteResponse.model_validate(n) for n in result.scalars().all()]
+
+
+@api_router.post("/animals/{animal_id}/notes", response_model=AnimalNoteResponse)
+async def create_animal_note(
+    animal_id: int,
+    data: AnimalNoteCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    await _require_animal(db, animal_id)
+    note = AnimalNote(animal_id=animal_id, **data.model_dump(), created_by=current_user.id)
+    db.add(note)
+    await db.commit()
+    return AnimalNoteResponse.model_validate(note)
+
+
+@api_router.put("/animals/{animal_id}/notes/{note_id}", response_model=AnimalNoteResponse)
+async def update_animal_note(
+    animal_id: int,
+    note_id: int,
+    data: AnimalNoteUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    note = await _load_note(db, animal_id, note_id)
+    for key in data.model_fields_set:
+        value = getattr(data, key)
+        if value is not None:  # all three note fields are non-nullable
+            setattr(note, key, value)
+    await db.commit()
+    return AnimalNoteResponse.model_validate(note)
+
+
+@api_router.delete("/animals/{animal_id}/notes/{note_id}")
+async def delete_animal_note(
+    animal_id: int,
+    note_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    await db.delete(await _load_note(db, animal_id, note_id))
+    await db.commit()
+    return {"message": "Note deleted"}
+
+
+# ---------- Animal timeline ----------
+@api_router.get("/animals/{animal_id}/timeline", response_model=List[TimelineItem])
+async def get_animal_timeline(
+    animal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    animal = await _require_animal(db, animal_id)
+    items: List[TimelineItem] = []
+
+    cycles = (await db.execute(
+        select(ReproductiveCycle).options(*_CYCLE_LOAD).where(ReproductiveCycle.animal_id == animal_id)
+    )).scalars().all()
+    for c in cycles:
+        label = f"Cycle {c.cycle_number}"
+        if c.service_date:
+            bull = c.bull_assignment.bull.tag_number if c.bull_assignment and c.bull_assignment.bull else None
+            detail = f"{c.service_type.value if c.service_type else 'natural'} service" + (f", bull {bull}" if bull else "")
+            items.append(TimelineItem(date=c.service_date, event_category="REPRODUCTION",
+                                      title=f"{label}: service", detail=detail,
+                                      source_table="reproductive_cycles", source_id=c.id))
+        if c.pd_check_date:
+            detail = c.pd_result.value if c.pd_result else None
+            if detail and c.pd_months_pregnant is not None:
+                detail += f", {c.pd_months_pregnant} months"
+            items.append(TimelineItem(date=c.pd_check_date, event_category="REPRODUCTION",
+                                      title=f"{label}: PD check", detail=detail,
+                                      source_table="reproductive_cycles", source_id=c.id))
+        if c.actual_calving_date:
+            detail = c.calving_outcome.value if c.calving_outcome else None
+            items.append(TimelineItem(date=c.actual_calving_date, event_category="REPRODUCTION",
+                                      title=f"{label}: calving", detail=detail,
+                                      source_table="reproductive_cycles", source_id=c.id))
+
+    health = (await db.execute(
+        select(FarmHealthEventModel).where(and_(
+            FarmHealthEventModel.location_id == animal.location_id,
+            FarmHealthEventModel.species == animal.species,
+        ))
+    )).scalars().all()
+    for h in health:
+        # category_ids is a JSON list (not a PG array); null/empty means all categories.
+        if h.category_scope == CategoryScope.SPECIFIC and h.category_ids and animal.category_id not in h.category_ids:
+            continue
+        title = h.event_type.value.title() + (f": {h.product_name}" if h.product_name else "")
+        items.append(TimelineItem(date=h.event_date, event_category="HEALTH", title=title,
+                                  detail=h.notes or h.dosage, source_table="farm_health_events", source_id=h.id))
+
+    for r in (await db.execute(select(BCSRecord).where(BCSRecord.animal_id == animal_id))).scalars().all():
+        items.append(TimelineItem(date=r.score_date, event_category="BCS", title=f"BCS {float(r.bcs):.1f}",
+                                  detail=r.notes, source_table="bcs_records", source_id=r.id))
+
+    for n in (await db.execute(select(AnimalNote).where(AnimalNote.animal_id == animal_id))).scalars().all():
+        items.append(TimelineItem(date=n.note_date, event_category="NOTE", title=n.note_type.value.title(),
+                                  detail=n.content, source_table="animal_notes", source_id=n.id))
+
+    items.sort(key=lambda i: i.date, reverse=True)
+    return items
+
+
+# ---------- Reproduction analytics ----------
+def _bcs_band(score: float) -> str:
+    if score < 2.0:
+        return "1.0-1.5"
+    if score < 3.0:
+        return "2.0-2.5"
+    if score < 4.0:
+        return "3.0-3.5"
+    return "4.0+"
+
+
+def _ratio(numerator: int, denominator: int) -> Optional[float]:
+    return round(numerator / denominator, 4) if denominator else None
+
+
+async def _repro_metrics(db: AsyncSession, year: int, location_id: Optional[int]) -> dict:
+    """Reproduction metrics for one year (and optionally one location, by the animal's current location).
+
+    koo_count: latest OpeningBalance per (location, species, category) for Koo categories with
+    period_start <= 1 Jan of the year, summed over species; falls back to current StockLevel when
+    there is no opening balance. Calvings/PD checks are bucketed by their own dates; open/pregnant
+    counts are a current snapshot of active animals.
+    """
+    start, end = date(year, 1, 1), date(year, 12, 31)
+    koo_ids = list((await db.execute(select(Category.id).where(Category.name_sw == "Koo"))).scalars().all())
+
+    koo_count = 0
+    if koo_ids:
+        ob_query = select(OpeningBalance).where(and_(
+            OpeningBalance.category_id.in_(koo_ids), OpeningBalance.period_start <= start))
+        if location_id:
+            ob_query = ob_query.where(OpeningBalance.location_id == location_id)
+        latest: dict = {}
+        for ob in (await db.execute(ob_query)).scalars().all():
+            key = (ob.location_id, ob.species, ob.category_id)
+            if key not in latest or ob.period_start > latest[key].period_start:
+                latest[key] = ob
+        if latest:
+            koo_count = sum(ob.count for ob in latest.values())
+        else:
+            sl_query = select(func.coalesce(func.sum(StockLevel.current_count), 0)).where(
+                StockLevel.category_id.in_(koo_ids))
+            if location_id:
+                sl_query = sl_query.where(StockLevel.location_id == location_id)
+            koo_count = (await db.execute(sl_query)).scalar() or 0
+
+    cyc_query = select(ReproductiveCycle).join(Animal, Animal.id == ReproductiveCycle.animal_id)
+    if location_id:
+        cyc_query = cyc_query.where(Animal.location_id == location_id)
+    cycles = (await db.execute(cyc_query)).scalars().all()
+
+    def in_year(d: Optional[date]) -> bool:
+        return d is not None and start <= d <= end
+
+    calved = [c for c in cycles if in_year(c.actual_calving_date)]
+    live = sum(1 for c in calved if c.calving_outcome in (CalvingOutcome.LIVE_CALF, CalvingOutcome.ASSISTED_LIVE))
+    pd_done = [c for c in cycles if c.pd_result is not None and in_year(c.pd_check_date)]
+    pd_pregnant = sum(1 for c in pd_done if c.pd_result == PDResult.PREGNANT)
+    confirmed = [c for c in cycles if c.pd_result == PDResult.PREGNANT
+                 and in_year(c.actual_calving_date or c.pd_check_date or c.service_date)]
+    aborted = sum(1 for c in confirmed
+                  if c.status == ReproductiveCycleStatus.ABORTED or c.calving_outcome == CalvingOutcome.ABORTION)
+    intervals = [c.calving_interval_days for c in calved if c.calving_interval_days is not None]
+
+    animal_query = select(Animal.id, Animal.category_id).where(
+        and_(Animal.status == AnimalStatus.ACTIVE, Animal.sex == AnimalSex.FEMALE))
+    if location_id:
+        animal_query = animal_query.where(Animal.location_id == location_id)
+    active_females = {row[0]: row[1] for row in (await db.execute(animal_query)).all()}
+    pregnant_ids = {
+        c.animal_id for c in cycles
+        if c.pd_result == PDResult.PREGNANT and c.actual_calving_date is None
+        and c.status != ReproductiveCycleStatus.ABORTED and c.calving_outcome != CalvingOutcome.ABORTION
+        and c.animal_id in active_females
+    }
+    open_cows = sum(1 for aid, cat in active_females.items() if cat in koo_ids and aid not in pregnant_ids)
+
+    bcs_query = (
+        select(BCSRecord).join(Animal, Animal.id == BCSRecord.animal_id)
+        .where(and_(Animal.status == AnimalStatus.ACTIVE, BCSRecord.score_date <= end))
+        .order_by(BCSRecord.score_date, BCSRecord.id)
+    )
+    if location_id:
+        bcs_query = bcs_query.where(Animal.location_id == location_id)
+    latest_bcs = {r.animal_id: float(r.bcs) for r in (await db.execute(bcs_query)).scalars().all()}
+    distribution = {"1.0-1.5": 0, "2.0-2.5": 0, "3.0-3.5": 0, "4.0+": 0}
+    for score in latest_bcs.values():
+        distribution[_bcs_band(score)] += 1
+
+    return {
+        "koo_count": int(koo_count),
+        "live_calvings": live,
+        "calving_rate": _ratio(live, int(koo_count)),
+        "conception_rate": _ratio(pd_pregnant, len(pd_done)),
+        "abortion_rate": _ratio(aborted, len(confirmed)),
+        "avg_calving_interval_days": round(sum(intervals) / len(intervals), 1) if intervals else None,
+        "open_cows": open_cows,
+        "pregnant_cows": len(pregnant_ids),
+        "bcs_distribution": distribution,
+    }
+
+
+@api_router.get("/analytics/reproduction", response_model=ReproductionAnalyticsResponse)
+async def get_reproduction_analytics(
+    location_id: Optional[int] = None,
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    year = year or date.today().year
+    overall = await _repro_metrics(db, year, location_id)
+    loc_query = select(Location).where(Location.is_active == True)  # noqa: E712
+    if location_id:
+        loc_query = loc_query.where(Location.id == location_id)
+    by_location = []
+    for loc in (await db.execute(loc_query.order_by(Location.name))).scalars().all():
+        by_location.append(LocationReproductionMetrics(
+            location_id=loc.id, location_name=loc.name, **(await _repro_metrics(db, year, loc.id))))
+    return ReproductionAnalyticsResponse(year=year, location_id=location_id, by_location=by_location, **overall)
+
 
 # Include router
 app.include_router(api_router)
