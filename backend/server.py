@@ -256,13 +256,19 @@ async def delete_user(
 
 # ==================== LOCATION ROUTES ====================
 @api_router.get("/locations", response_model=List[LocationResponse])
-async def list_locations(db: AsyncSession = Depends(get_db)):
+async def list_locations(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
+):
     result = await db.execute(select(Location).where(Location.is_active == True).order_by(Location.name))
     locations = result.scalars().all()
     return [LocationResponse.model_validate(loc) for loc in locations]
 
 @api_router.get("/locations/{location_id}", response_model=LocationResponse)
-async def get_location(location_id: int, db: AsyncSession = Depends(get_db)):
+async def get_location(
+    location_id: int, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
+):
     result = await db.execute(select(Location).where(Location.id == location_id))
     location = result.scalar_one_or_none()
     if not location:
@@ -555,7 +561,8 @@ async def import_opening_balances(
 @api_router.get("/categories", response_model=List[CategoryResponse])
 async def list_categories(
     species: Optional[SpeciesType] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     query = select(Category).where(Category.is_active == True)
     if species:
@@ -570,7 +577,8 @@ async def list_categories(
 @api_router.get("/diseases", response_model=List[DiseaseResponse])
 async def list_diseases(
     species: Optional[SpeciesType] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     """List all diseases, optionally filtered by species"""
     query = select(Disease).where(Disease.is_active == True)
@@ -655,7 +663,8 @@ async def update_disease(
 async def list_opening_balances(
     location_id: Optional[int] = None,
     species: Optional[SpeciesType] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     query = select(OpeningBalance).options(
         selectinload(OpeningBalance.location),
@@ -767,7 +776,8 @@ async def list_daily_logs(
     location_id: Optional[int] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     query = select(DailyLog).options(
         selectinload(DailyLog.location),
@@ -819,7 +829,10 @@ async def list_daily_logs(
     return response
 
 @api_router.get("/daily-logs/{log_id}", response_model=DailyLogResponse)
-async def get_daily_log(log_id: int, db: AsyncSession = Depends(get_db)):
+async def get_daily_log(
+    log_id: int, db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
+):
     result = await db.execute(
         select(DailyLog)
         .options(selectinload(DailyLog.location), selectinload(DailyLog.events))
@@ -1423,7 +1436,8 @@ async def delete_event(
 async def list_stock_levels(
     location_id: Optional[int] = None,
     species: Optional[SpeciesType] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     query = select(StockLevel).options(
         selectinload(StockLevel.location),
@@ -1468,7 +1482,8 @@ async def recompute_stock_levels_endpoint(
 async def get_dashboard(
     location_id: Optional[int] = None,
     period_days: int = Query(30, ge=1, le=3650),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     today = date.today()
     period_start = today - timedelta(days=period_days)
@@ -1809,7 +1824,8 @@ async def build_location_totals_from_snapshot(
 @api_router.get("/reports/daily")
 async def get_daily_report(
     report_date: date = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     if not report_date:
         report_date = date.today()
@@ -1865,7 +1881,8 @@ async def get_range_report(
     end_date: date,
     event_type: Optional[EventType] = None,
     location_id: Optional[int] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     query = select(Event).join(DailyLog).where(
         and_(
@@ -1919,7 +1936,8 @@ async def get_analytics_report(
     start_date: date,
     end_date: date,
     location_id: Optional[int] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     """Get mortality rate, calving rate, weaning rate, death/abortion/sales analysis for a date range"""
     
@@ -2437,7 +2455,8 @@ async def get_detailed_report(
     start_date: date,
     end_date: date,
     location_id: Optional[int] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     if end_date < start_date:
         raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
