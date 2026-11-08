@@ -497,6 +497,7 @@ class AnimalResponse(BaseModel):
     location_name: Optional[str] = None
     created_by_name: Optional[str] = None
     registry_tag_id: Optional[str] = None
+    is_temp_tag: bool = False
 
 class BulkImportResult(BaseModel):
     created: int
@@ -856,3 +857,14 @@ class ReconciliationRow(BaseModel):
     unregistered: int
 
 ReconciliationResponse = List[ReconciliationRow]
+
+
+# Temporary tags for untagged newborns
+class ReplaceTagRequest(BaseModel):
+    new_tag_number: str = Field(min_length=1)
+
+class ReplaceTagResponse(BaseModel):
+    message: str
+    old_tag: str
+    new_tag: str
+    animal_id: int

@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getDashboard, getLocations, getLastEvents, getLastVaccinations } from '../lib/api';
+import { getDashboard, getLocations, getLastEvents, getLastVaccinations, getRegisterReconciliation } from '../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Cow, TrendUp, TrendDown, Plus, Heartbeat, Skull, Baby, MapPin, FirstAidKit, WarningCircle, Syringe } from '@phosphor-icons/react';
+import { Cow, TrendUp, TrendDown, Plus, Heartbeat, Skull, Baby, MapPin, FirstAidKit, WarningCircle, Syringe, Tag } from '@phosphor-icons/react';
 import { SPECIES_CONFIG, formatDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
+import { coverageTone, summariseReconciliation, TONE_BAR, TONE_TEXT } from '../lib/registerCoverage';
 
 function SpeciesCard({ species, total, color }) {
   const config = SPECIES_CONFIG[species];
@@ -177,6 +178,50 @@ function LocationItem({ location }) {
   );
 }
 
+function RegisterSummaryCard({ summary }) {
+  const tone = coverageTone(summary.pct);
+  const pctLabel = summary.pct === null ? '—' : `${summary.pct}%`;
+  const barWidth = summary.pct === null ? 0 : Math.min(100, Math.max(0, summary.pct));
+  return (
+    <Card className="border-border/60" data-testid="register-summary-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="font-heading flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Tag className="h-5 w-5 text-primary" />
+            Animal register
+            <span className="text-xs font-normal text-muted-foreground">all farms</span>
+          </span>
+          <Link to="/animals?panel=register" className="text-xs font-normal text-muted-foreground hover:text-primary transition-colors">
+            View details →
+          </Link>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
+          <div>
+            <p className={`text-4xl font-bold font-heading ${TONE_TEXT[tone]}`} data-testid="register-coverage-pct">{pctLabel}</p>
+            <p className="text-xs text-muted-foreground">of stock individually registered</p>
+          </div>
+          <div className="text-sm space-y-0.5">
+            <p><span className="font-semibold">{summary.registered}</span> registered</p>
+            <p><span className="font-semibold">{summary.unregistered}</span> unregistered across all farms</p>
+          </div>
+        </div>
+        <div className="h-2 w-full rounded-full bg-muted overflow-hidden" role="progressbar"
+          aria-valuenow={barWidth} aria-valuemin={0} aria-valuemax={100} aria-label="Register coverage">
+          <div className={`h-full rounded-full ${TONE_BAR[tone]}`} style={{ width: `${barWidth}%` }} />
+        </div>
+        {summary.attentionFarms > 0 && (
+          <Link to="/animals?panel=register" className="flex items-center gap-2 text-xs text-red-600 font-medium hover:underline">
+            <WarningCircle className="h-4 w-4 flex-shrink-0" weight="fill" />
+            {summary.attentionFarms} farm{summary.attentionFarms !== 1 ? 's' : ''} need{summary.attentionFarms === 1 ? 's' : ''} attention
+          </Link>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -185,6 +230,7 @@ function Dashboard() {
   const [selectedPeriod, setSelectedPeriod] = useState('30');
   const [healthSummaries, setHealthSummaries] = useState([]);
   const [vaccinationSummaries, setVaccinationSummaries] = useState([]);
+  const [registerRows, setRegisterRows] = useState(null);
   const { isDataEntry } = useAuth();
 
   useEffect(function() {
@@ -208,6 +254,12 @@ function Dashboard() {
       setVaccinationSummaries(vacRes.data);
     } catch {
       // Health data is non-critical
+    }
+    try {
+      const regRes = await getRegisterReconciliation();
+      setRegisterRows(regRes.data);
+    } catch {
+      // Register summary is non-critical: the card simply stays hidden
     }
   }
 
@@ -248,6 +300,7 @@ function Dashboard() {
     );
   }
 
+  const registerSummary = registerRows && registerRows.length > 0 ? summariseReconciliation(registerRows) : null;
   const speciesTotals = data?.species_totals || [];
   const speciesCategoryTotals = data?.species_category_totals || [];
   const locationTotals = data?.location_totals || [];
@@ -439,6 +492,8 @@ function Dashboard() {
               </CardContent>
             </Card>
           )}
+
+          {registerSummary && <RegisterSummaryCard summary={registerSummary} />}
 
           {healthSummaries.length > 0 && (
             <Card className="border-border/60">

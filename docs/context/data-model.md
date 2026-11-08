@@ -88,7 +88,8 @@ Source: `backend/models.py:212`.
 - `sex: SQLEnum(AnimalSex) !`; `birth_date: Date ?`; `mother_tag: String(100) ?`.
 - `father_tag: String(100) ?`; `acquisition_type: SQLEnum(AnimalAcquisitionType) !`; `acquisition_date: Date !`.
 - `status: SQLEnum(AnimalStatus) ! [default=AnimalStatus.ACTIVE]`; `status_changed_at: DateTime(timezone=True) ?`; `notes: Text ?`.
-- `registry_tag_id: String(100) ? [IX]`; `created_by: Integer ? [FK users.id]`; `created_at: DateTime(timezone=True) ? [default=UTC now]`.
+- `registry_tag_id: String(100) ? [IX]`; `is_temp_tag: Boolean ! [default=False; server_default 'false']` (added 2026-11-08 via startup `ADD COLUMN IF NOT EXISTS is_temp_tag BOOLEAN DEFAULT FALSE`, nullable in existing PostgreSQL databases; the model says NOT NULL for fresh/SQLite databases; true while the tag is a generated `TEMP-<LOC>-<YYYYMMDD>-NNN` placeholder).
+- `created_by: Integer ? [FK users.id]`; `created_at: DateTime(timezone=True) ? [default=UTC now]`.
 - `updated_at: DateTime(timezone=True) ? [default=UTC now; onupdate=UTC now]`.
 - Table constraints/indexes: `(UniqueConstraint('tag_number', 'species', 'location_id', name='uq_animal_tag'),)`.
 - ORM relationships: `category=relationship('Category')`; `location=relationship('Location')`; `creator=relationship('User', foreign_keys=[created_by])`.

@@ -174,4 +174,15 @@ export const updateAnimalNote = (id, noteId, data) => api.put(`/animals/${id}/no
 export const deleteAnimalNote = (id, noteId) => api.delete(`/animals/${id}/notes/${noteId}`);
 export const getAnimalBCSHistory = (id) => api.get('/bcs-records', { params: { animal_id: id } });
 
+// Animal register: movement history + reconciliation (backend: docs/decisions/0009)
+export const getAnimalLocationHistory = (id) =>
+  api.get(`/animals/${id}/location-history`);
+
+export const getRegisterReconciliation = () =>
+  api.get('/animals/register-reconciliation');
+
+// Temp tags (backend: docs/decisions/0009 follow-up)
+export const replaceAnimalTag = (id, newTagNumber) =>
+  api.post(`/animals/${id}/replace-tag`, { new_tag_number: newTagNumber });
+
 export default api;

@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
 from sqlalchemy.orm import selectinload
 import os
+import re
 import logging
 import csv
 import io
@@ -55,7 +56,7 @@ from schemas import (
     AnimalPhotoCreate, AnimalPhotoUpdate, AnimalPhotoResponse,
     AnimalNoteCreate, AnimalNoteUpdate, AnimalNoteResponse,
     TimelineItem, LocationReproductionMetrics, ReproductionAnalyticsResponse,
-    AnimalLocationHistoryResponse, ReconciliationRow,
+    AnimalLocationHistoryResponse, ReconciliationRow, ReplaceTagRequest, ReplaceTagResponse,
 )
 from auth import (
     verify_password, get_password_hash, create_access_token,
@@ -125,6 +126,10 @@ async def startup():
         ))
         await conn.execute(text(
             "ALTER TABLE animals ADD COLUMN IF NOT EXISTS registry_tag_id VARCHAR(100)"
+        ))
+        # Temporary tags for untagged newborns (nullable column with default: additive only).
+        await conn.execute(text(
+            "ALTER TABLE animals ADD COLUMN IF NOT EXISTS is_temp_tag BOOLEAN DEFAULT FALSE"
         ))
         # create_all() only creates brand-new tables, so the Column(index=True) above never
         # applies retroactively to the pre-existing animals table — done explicitly here.
@@ -1024,6 +1029,14 @@ async def create_daily_log(
             await apply_event_to_stock(db, data.location_id, event_data)
 
     await db.commit()
+
+    # Sync animal register per event, in order (best-effort: never rolls back the stock commit)
+    sync_warnings_by_event = {}
+    for event in created_events:
+        sync_warnings_by_event[event.id] = await _sync_animals_from_event(db, event, daily_log, current_user)
+    # A register rollback expires every loaded object, so reload what the response reads
+    for event in created_events:
+        await db.refresh(event)
     await db.refresh(daily_log)
 
     event_responses = [
@@ -1052,6 +1065,7 @@ async def create_daily_log(
             buyer_phone=event.buyer_phone,
             buyer_address=event.buyer_address,
             sale_price=event.sale_price,
+            sync_warnings=sync_warnings_by_event.get(event.id) or None,
         )
         for event in created_events
     ]
@@ -1143,6 +1157,39 @@ async def _restore_after_rollback(db: AsyncSession, *objs) -> None:
             logger.warning("Could not refresh %r after register-sync rollback", obj, exc_info=True)
 
 
+_MAX_TEMP_ANIMALS_PER_EVENT = 50
+_TEMP_PLACEHOLDERS = {"", "new", "temp"}
+
+
+def _offspring_entries(raw: Optional[str], count: Optional[int]) -> List[str]:
+    """Offspring entries for a birth, empties preserved ('KK-001, , KK-003' -> middle is untagged).
+
+    A blank field means the newborns are untagged: one placeholder entry per head of `count`.
+    """
+    if raw is None or not raw.strip():
+        return [""] * min(max(count or 0, 0), _MAX_TEMP_ANIMALS_PER_EVENT)
+    return [part.strip() for part in raw.split(",")]
+
+
+async def _generate_temp_tag(location_name: Optional[str], log_date: date, db: AsyncSession) -> str:
+    """TEMP-<LOC>-<YYYYMMDD>-NNN: next free sequence for this prefix and date.
+
+    Optimistic: the unique constraint (tag, species, location) still arbitrates concurrent writers.
+    """
+    prefix = re.sub(r"[^A-Za-z0-9]", "", location_name or "")[:3].upper() or "UNK"
+    base = f"TEMP-{prefix}-{log_date.strftime('%Y%m%d')}"
+    used = (await db.execute(
+        select(func.count()).select_from(Animal).where(Animal.tag_number.like(f"{base}-%"))
+    )).scalar() or 0
+    seq = used + 1
+    while True:  # skip past tags that already exist (e.g. after deletions)
+        tag = f"{base}-{seq:03d}"
+        taken = (await db.execute(select(Animal.id).where(Animal.tag_number == tag).limit(1))).first()
+        if taken is None:
+            return tag
+        seq += 1
+
+
 async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: DailyLog,
                                    current_user: User) -> List[str]:
     """Apply an event to the individual animal register. Never raises; returns warnings."""
@@ -1158,7 +1205,7 @@ async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: Da
         log_date = daily_log.log_date
         user_id = current_user.id
         tags = _split_tags(event.animal_tags)
-        offspring = _split_tags(event.offspring_tags) if et == EventType.BIRTH else []
+        offspring = _offspring_entries(event.offspring_tags, event.count) if et == EventType.BIRTH else []
         if not tags and not offspring:
             return warnings
 
@@ -1166,7 +1213,8 @@ async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: Da
             logger.warning("Animal register sync (event %s): %s", event_id, msg)
             warnings.append(msg)
 
-        async def create_animal_row(tag: str, acquisition: AnimalAcquisitionType) -> Optional[Animal]:
+        async def create_animal_row(tag: str, acquisition: AnimalAcquisitionType,
+                                    is_temp_tag: bool = False, notes: Optional[str] = None) -> Optional[Animal]:
             if not category_id:
                 warn(f"Tag {tag}: no category on event, animal not created")
                 return None
@@ -1178,6 +1226,7 @@ async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: Da
                 tag_number=tag, species=species, category_id=category_id,
                 location_id=log_location_id, sex=sex, status=AnimalStatus.ACTIVE,
                 acquisition_type=acquisition, acquisition_date=log_date, created_by=user_id,
+                is_temp_tag=is_temp_tag, notes=notes,
             )
             db.add(animal)
             await db.flush()
@@ -1229,12 +1278,39 @@ async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: Da
                     animal.category_id = to_category_id
             # BIRTH / ABORTION: nothing to change on the mother's record
 
+        # Placeholders (blank / NEW / TEMP) get generated temp tags. Re-saving the event must not
+        # duplicate them, so only the shortfall against temp animals already stamped with this
+        # event's marker is created. Typed TEMP-* tags are kept as typed (flagged temp).
+        temp_needed = sum(1 for t in offspring if t.lower() in _TEMP_PLACEHOLDERS)
+        temp_stamp = f"Auto-created temp tag from birth event #{event_id}"
+        temp_missing = temp_needed
+        if temp_needed:
+            already = (await db.execute(
+                select(func.count()).select_from(Animal).where(
+                    and_(Animal.is_temp_tag == True, Animal.notes == temp_stamp)  # noqa: E712
+                )
+            )).scalar() or 0
+            temp_missing = max(0, temp_needed - already)
+        location_name = None
+        if temp_missing:
+            location = await db.get(Location, log_location_id)
+            location_name = location.name if location else "UNK"
+
         for tag in offspring:
+            if tag.lower() in _TEMP_PLACEHOLDERS:
+                if temp_missing <= 0:
+                    continue
+                temp_missing -= 1
+                new_tag = await _generate_temp_tag(location_name, log_date, db)
+                await create_animal_row(new_tag, AnimalAcquisitionType.BORN, is_temp_tag=True, notes=temp_stamp)
+                continue
             existing = await _find_animal(db, tag, species)
             if existing is not None:
                 warn(f"Offspring tag {tag}: already in the animal register, skipped")
                 continue
-            await create_animal_row(tag, AnimalAcquisitionType.BORN)
+            await create_animal_row(
+                tag, AnimalAcquisitionType.BORN, is_temp_tag=tag.upper().startswith("TEMP-")
+            )
 
         await db.commit()
     except Exception:
@@ -1243,7 +1319,7 @@ async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: Da
             await db.rollback()
         except Exception:
             logger.exception("Rollback after animal register sync failure also failed")
-        await _restore_after_rollback(db, event, daily_log)
+        await _restore_after_rollback(db, event, daily_log, current_user)
         warnings.append(_SYNC_FAILED_MSG)
     return warnings
 
@@ -3229,6 +3305,7 @@ def _animal_response(animal: Animal) -> AnimalResponse:
         location_name=animal.location.name if animal.location else None,
         created_by_name=animal.creator.name if animal.creator else None,
         registry_tag_id=animal.registry_tag_id,
+        is_temp_tag=bool(animal.is_temp_tag),
     )
 
 @api_router.get("/templates/animals")
@@ -3285,6 +3362,7 @@ async def list_animals(
     category_id: Optional[int] = None,
     status: Optional[AnimalStatus] = None,
     search: Optional[str] = None,
+    is_temp_tag: Optional[bool] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -3301,6 +3379,8 @@ async def list_animals(
         query = query.where(Animal.category_id == category_id)
     if status:
         query = query.where(Animal.status == status)
+    if is_temp_tag is not None:
+        query = query.where(Animal.is_temp_tag == is_temp_tag)
     if search:
         query = query.where(
             or_(Animal.tag_number.ilike(f'%{search}%'), Animal.name.ilike(f'%{search}%'))
@@ -3558,6 +3638,50 @@ async def get_animal_location_history(
         for r in rows
     ]
 
+@api_router.post("/animals/{animal_id}/replace-tag", response_model=ReplaceTagResponse)
+async def replace_animal_tag(
+    animal_id: int,
+    data: ReplaceTagRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    """Replace a temporary tag (TEMP-...) with the real ear-tag number."""
+    animal = (await db.execute(select(Animal).where(Animal.id == animal_id))).scalar_one_or_none()
+    if not animal:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    if not animal.is_temp_tag:
+        raise HTTPException(
+            status_code=400,
+            detail="This animal does not have a temporary tag. Use the edit endpoint to change tags.",
+        )
+    new_tag = data.new_tag_number.strip()
+    old_tag = animal.tag_number
+    animal_pk = animal.id
+    if not new_tag:
+        raise HTTPException(status_code=400, detail="New tag number cannot be blank")
+    if new_tag == old_tag:
+        raise HTTPException(status_code=400, detail="New tag is the same as the current tag")
+    clash = (await db.execute(
+        select(func.count()).select_from(Animal).where(and_(
+            Animal.tag_number == new_tag,
+            Animal.species == animal.species,
+            Animal.location_id == animal.location_id,
+            Animal.id != animal.id,
+        ))
+    )).scalar()
+    if clash:
+        raise HTTPException(status_code=409, detail="Tag already in use at this location")
+
+    animal.tag_number = new_tag
+    animal.is_temp_tag = False
+    animal.updated_at = datetime.now(timezone.utc)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Tag already in use at this location")
+    return ReplaceTagResponse(message="Tag replaced", old_tag=old_tag, new_tag=new_tag, animal_id=animal_pk)
+
 @api_router.put("/animals/{animal_id}", response_model=AnimalResponse)
 async def update_animal(
     animal_id: int,
@@ -3592,6 +3716,16 @@ async def update_animal(
     if data.category_id is not None:
         animal.category_id = data.category_id
     if data.location_id is not None:
+        if data.location_id != animal.location_id:
+            # Movement history (same transaction); manual edit, so no event_id
+            db.add(AnimalLocationHistory(
+                animal_id=animal.id,
+                from_location_id=animal.location_id,
+                to_location_id=data.location_id,
+                moved_date=datetime.now(timezone.utc).date(),
+                notes="Location changed by editing the animal record",
+                created_by=current_user.id,
+            ))
         animal.location_id = data.location_id
     if data.sex is not None:
         animal.sex = data.sex
@@ -3692,6 +3826,18 @@ async def transfer_animal(
 
     animal.location_id = data.to_location_id
     animal.status_changed_at = datetime.now(timezone.utc)
+
+    # Movement history (same transaction as the move; event_id links the TRANSFER event above)
+    await db.flush()
+    db.add(AnimalLocationHistory(
+        animal_id=animal.id,
+        from_location_id=old_location_id,
+        to_location_id=data.to_location_id,
+        moved_date=data.transfer_date,
+        event_id=event.id,
+        notes=data.notes,
+        created_by=current_user.id,
+    ))
     await db.commit()
 
     result = await db.execute(

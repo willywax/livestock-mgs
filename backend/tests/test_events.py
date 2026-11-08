@@ -6,7 +6,7 @@ from conftest import (
     FARM_ID, api_stock, auth, category_id, lock_log, make_daily_log,
     make_location, make_stock, post_event,
 )
-from models import SpeciesType
+from models import Animal, AnimalAcquisitionType, AnimalSex, SpeciesType
 
 pytestmark = pytest.mark.asyncio
 CATTLE = SpeciesType.CATTLE
@@ -216,3 +216,189 @@ async def test_reconciliation_counts_registered_vs_stock(client, db_session):
     row = next(x for x in r.json() if x["location_id"] == FARM_ID and x["species"] == "cattle")
     assert row["stock_count"] == 50 and row["registered_active"] == 1
     assert row["unregistered"] == 49 and row["registered_pct"] == 2.0
+
+
+async def test_manual_animal_transfer_writes_location_history(client, db_session):
+    _, koo = await _setup(db_session)
+    loc_b = await make_location(db_session, "Loc B")
+    aid = await _mk_animal(client, "T-800", koo)
+    r = await client.post(f"/api/animals/{aid}/transfer", headers=auth("admin"),
+                          json={"to_location_id": loc_b, "transfer_date": "2026-05-12", "notes": "rotation"})
+    assert r.status_code == 200
+    hist = (await client.get(f"/api/animals/{aid}/location-history", headers=auth("viewer"))).json()
+    assert len(hist) == 1
+    assert hist[0]["from_location_id"] == FARM_ID and hist[0]["to_location_id"] == loc_b
+    assert hist[0]["moved_date"] == "2026-05-12" and hist[0]["notes"] == "rotation"
+    assert hist[0]["event_id"] is not None
+
+
+async def test_edit_animal_location_writes_history_only_when_changed(client, db_session):
+    _, koo = await _setup(db_session)
+    loc_b = await make_location(db_session, "Loc B")
+    aid = await _mk_animal(client, "T-900", koo)
+    # same location: no history row
+    r = await client.put(f"/api/animals/{aid}", json={"location_id": FARM_ID, "name": "Bella"},
+                         headers=auth("admin"))
+    assert r.status_code == 200
+    assert (await client.get(f"/api/animals/{aid}/location-history", headers=auth("admin"))).json() == []
+    # location omitted: no history row
+    await client.put(f"/api/animals/{aid}", json={"name": "Bella2"}, headers=auth("admin"))
+    assert (await client.get(f"/api/animals/{aid}/location-history", headers=auth("admin"))).json() == []
+    # changed location: one row, no event
+    r = await client.put(f"/api/animals/{aid}", json={"location_id": loc_b}, headers=auth("admin"))
+    assert r.status_code == 200 and r.json()["location_id"] == loc_b
+    hist = (await client.get(f"/api/animals/{aid}/location-history", headers=auth("admin"))).json()
+    assert len(hist) == 1
+    assert hist[0]["from_location_id"] == FARM_ID and hist[0]["to_location_id"] == loc_b
+    assert hist[0]["event_id"] is None
+
+
+async def test_create_daily_log_syncs_register_per_event(client, db_session):
+    koo = await category_id(db_session, CATTLE)
+    aid = await _mk_animal(client, "T-1000", koo)
+    r = await client.post("/api/daily-logs", headers=auth("data_entry"), json={
+        "location_id": FARM_ID, "log_date": "2024-02-02", "has_events": True,
+        "events": [
+            {"event_type": "death", "species": "cattle", "category_id": koo, "count": 1,
+             "animal_tags": "T-1000"},
+            {"event_type": "bought", "species": "cattle", "category_id": koo, "count": 1,
+             "animal_tags": "NEW-LOG-1"},
+            {"event_type": "death", "species": "cattle", "category_id": koo, "count": 1,
+             "animal_tags": "NOPE-2"},
+        ],
+    })
+    assert r.status_code == 200, r.text
+    evs = r.json()["events"]
+    assert evs[0]["sync_warnings"] is None and evs[1]["sync_warnings"] is None
+    assert any("NOPE-2" in w for w in evs[2]["sync_warnings"])
+    assert (await _animal(client, aid))["status"] == "dead"
+    found = (await client.get("/api/animals?search=NEW-LOG-1", headers=auth("admin"))).json()
+    assert len(found) == 1 and found[0]["status"] == "active"
+    assert await api_stock(client, FARM_ID, koo) == 49  # 50 - 2 deaths + 1 bought
+
+
+async def test_register_sync_failure_never_breaks_daily_log_save(client, db_session, monkeypatch):
+    import server
+
+    async def boom(*a, **k):
+        raise RuntimeError("register exploded")
+
+    monkeypatch.setattr(server, "_find_animal", boom)
+    koo = await category_id(db_session, CATTLE)
+    r = await client.post("/api/daily-logs", headers=auth("admin"), json={
+        "location_id": FARM_ID, "log_date": "2024-03-03", "has_events": True,
+        "events": [
+            {"event_type": "death", "species": "cattle", "category_id": koo, "count": 1, "animal_tags": "A-1"},
+            {"event_type": "death", "species": "cattle", "category_id": koo, "count": 1, "animal_tags": "A-2"},
+        ],
+    })
+    assert r.status_code == 200, r.text
+    evs = r.json()["events"]
+    assert len(evs) == 2
+    assert all(e["sync_warnings"] and "register could not be updated" in e["sync_warnings"][0] for e in evs)
+    assert await api_stock(client, FARM_ID, koo) == 48  # stock committed regardless
+
+
+# ---- temp tags ----------------------------------------------------------------
+
+async def _mk_temp_animal(db, cat, tag="TEMP-TES-20260101-001", loc=FARM_ID, temp=True):
+    a = Animal(tag_number=tag, species=CATTLE, category_id=cat, location_id=loc, sex=AnimalSex.FEMALE,
+               acquisition_type=AnimalAcquisitionType.BORN, acquisition_date=date.today(), is_temp_tag=temp)
+    db.add(a)
+    await db.commit()
+    return a.id
+
+
+async def _all_animals(client, **params):
+    r = await client.get("/api/animals", params=params, headers=auth("admin"))
+    assert r.status_code == 200
+    return r.json()
+
+
+async def test_temp_tag_generated_for_empty_offspring(client, db_session):
+    log, _ = await _setup(db_session)
+    calf = await category_id(db_session, CATTLE, "Ndama Jike")
+    r = await post_event(client, log, event_type="birth", species="cattle", category_id=calf,
+                         count=3, offspring_tags="KK-001, , KK-003")
+    assert r.status_code == 200 and not r.json()["sync_warnings"]
+    animals = await _all_animals(client)
+    by_tag = {a["tag_number"]: a for a in animals}
+    assert by_tag["KK-001"]["is_temp_tag"] is False and by_tag["KK-003"]["is_temp_tag"] is False
+    temps = [a for a in animals if a["is_temp_tag"]]
+    assert len(temps) == 1
+    assert temps[0]["tag_number"] == f"TEMP-TES-{date.today():%Y%m%d}-001"
+    assert temps[0]["acquisition_type"] == "born" and temps[0]["sex"] == "female"
+
+
+async def test_blank_offspring_creates_temp_animals_per_count(client, db_session):
+    log, _ = await _setup(db_session)
+    calf = await category_id(db_session, CATTLE, "Ndama Dume")
+    r = await post_event(client, log, event_type="birth", species="cattle", category_id=calf, count=2)
+    assert r.status_code == 200
+    temps = await _all_animals(client, is_temp_tag="true")
+    assert sorted(a["tag_number"] for a in temps) == [
+        f"TEMP-TES-{date.today():%Y%m%d}-001", f"TEMP-TES-{date.today():%Y%m%d}-002",
+    ]
+    assert all(a["sex"] == "male" for a in temps)
+
+
+async def test_resaving_birth_event_does_not_duplicate_temp_animals(client, db_session):
+    log, _ = await _setup(db_session)
+    calf = await category_id(db_session, CATTLE, "Ndama Jike")
+    ev = (await post_event(client, log, event_type="birth", species="cattle", category_id=calf,
+                           count=2, offspring_tags="KK-9, ")).json()
+    assert len(await _all_animals(client, is_temp_tag="true")) == 1
+    r = await client.put(f"/api/events/{ev['id']}", json={"notes": "edited"}, headers=auth("admin"))
+    assert r.status_code == 200
+    r = await client.put(f"/api/events/{ev['id']}", json={"notes": "edited again"}, headers=auth("admin"))
+    assert r.status_code == 200
+    assert len(await _all_animals(client, is_temp_tag="true")) == 1
+    assert len(await _all_animals(client)) == 2
+
+
+async def test_replace_tag_success(client, db_session):
+    _, koo = await _setup(db_session)
+    aid = await _mk_temp_animal(db_session, koo)
+    r = await client.post(f"/api/animals/{aid}/replace-tag", json={"new_tag_number": " KK-001 "},
+                          headers=auth("data_entry"))
+    assert r.status_code == 200
+    assert r.json() == {"message": "Tag replaced", "old_tag": "TEMP-TES-20260101-001",
+                        "new_tag": "KK-001", "animal_id": aid}
+    a = await _animal(client, aid)
+    assert a["tag_number"] == "KK-001" and a["is_temp_tag"] is False
+
+
+async def test_replace_tag_rejected_on_real_animal(client, db_session):
+    _, koo = await _setup(db_session)
+    aid = await _mk_animal(client, "REAL-1", koo)
+    r = await client.post(f"/api/animals/{aid}/replace-tag", json={"new_tag_number": "KK-002"},
+                          headers=auth("admin"))
+    assert r.status_code == 400
+    assert "does not have a temporary tag" in r.json()["detail"]
+    assert (await _animal(client, aid))["tag_number"] == "REAL-1"
+
+
+async def test_replace_tag_conflict_missing_and_viewer(client, db_session):
+    _, koo = await _setup(db_session)
+    await _mk_animal(client, "TAKEN-1", koo)
+    aid = await _mk_temp_animal(db_session, koo)
+    r = await client.post(f"/api/animals/{aid}/replace-tag", json={"new_tag_number": "TAKEN-1"},
+                          headers=auth("admin"))
+    assert r.status_code == 409
+    assert (await _animal(client, aid))["is_temp_tag"] is True
+    assert (await client.post("/api/animals/9999/replace-tag", json={"new_tag_number": "X"},
+                              headers=auth("admin"))).status_code == 404
+    assert (await client.post(f"/api/animals/{aid}/replace-tag", json={"new_tag_number": "OK-1"},
+                              headers=auth("viewer"))).status_code == 403
+
+
+async def test_list_animals_temp_filter(client, db_session):
+    _, koo = await _setup(db_session)
+    await _mk_temp_animal(db_session, koo, tag="TEMP-TES-20260101-001")
+    await _mk_temp_animal(db_session, koo, tag="REAL-2", temp=False)
+    only_temp = await _all_animals(client, is_temp_tag="true")
+    only_real = await _all_animals(client, is_temp_tag="false")
+    both = await _all_animals(client)
+    assert [a["tag_number"] for a in only_temp] == ["TEMP-TES-20260101-001"]
+    assert [a["tag_number"] for a in only_real] == ["REAL-2"]
+    assert len(both) == 2

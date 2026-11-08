@@ -6,13 +6,14 @@ import {
   CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
-  ArrowLeft, ArrowsLeftRight, Camera, CaretDown, CaretRight, LinkSimple, Pencil, Plus, Star, Trash, Warning, X,
+  ArrowLeft, ArrowRight, ArrowsLeftRight, Camera, CaretDown, CaretRight, LinkSimple, Pencil, Plus, Star, Trash, Warning, X,
 } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import {
   getAnimalDetail, getAnimalPhotos, uploadAnimalPhoto, updateAnimalPhoto, deleteAnimalPhoto,
   getAnimalTimeline, getAnimalReproductiveHistory, getAnimalBCSHistory,
-  getAnimalNotes, createAnimalNote, updateAnimalNote, deleteAnimalNote,
+  getAnimalNotes, createAnimalNote, updateAnimalNote, deleteAnimalNote, getAnimalLocationHistory,
+  replaceAnimalTag,
 } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -312,13 +313,102 @@ function PhotoGallery({ animalId, photos, loading, canWrite, isAdmin, onChanged 
 // ---------------------------------------------------------------------------
 // Identity card
 // ---------------------------------------------------------------------------
-function IdentityCard({ animal, canWrite, isAdmin }) {
+// ---------------------------------------------------------------------------
+// Replace-temporary-tag dialog (POST /animals/{id}/replace-tag)
+// ---------------------------------------------------------------------------
+function ReplaceTagDialog({ open, onClose, animal, onReplaced }) {
+  const [newTag, setNewTag] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (open) { setNewTag(''); setError(''); }
+  }, [open]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const tag = newTag.trim();
+    if (!tag) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceAnimalTag(animal.id, tag);
+      toast.success(`Tag replaced — ${animal.tag_number} → ${tag}`);
+      onReplaced();
+      onClose();
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 409) setError('This tag is already in use at this location');
+      else if (status === 400) setError(errText(err, 'Could not replace the tag'));
+      else toast.error(errText(err, 'Failed to replace tag'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm" data-testid="replace-tag-dialog">
+        <DialogHeader>
+          <DialogTitle className="font-heading">Replace temporary tag</DialogTitle>
+          <DialogDescription>
+            Current tag: <span className="font-mono">{animal.tag_number}</span>
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="new_tag_number">New tag number</Label>
+            <Input
+              id="new_tag_number"
+              value={newTag}
+              onChange={(e) => { setNewTag(e.target.value); setError(''); }}
+              required
+              minLength={1}
+              className="font-mono"
+              data-testid="new-tag-input"
+            />
+            <p className="text-xs text-muted-foreground">Enter the real tag from the ear tag or EID chip</p>
+            {error && <p className="text-sm text-red-600" data-testid="replace-tag-error">{error}</p>}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={saving || !newTag.trim()} data-testid="replace-tag-submit">
+              {saving ? 'Replacing...' : 'Replace tag'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function IdentityCard({ animal, canWrite, isAdmin, onReplaceTag }) {
   const navigate = useNavigate();
   return (
     <Card data-testid="identity-card">
       <CardContent className="p-4 space-y-3">
         <div>
-          <h1 className="font-heading text-2xl font-bold font-mono">{animal.tag_number}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="font-heading text-2xl font-bold font-mono">{animal.tag_number}</h1>
+            {animal.is_temp_tag && canWrite && (
+              <Button
+                size="sm"
+                className="bg-amber-500 text-white hover:bg-amber-600"
+                onClick={onReplaceTag}
+                data-testid="replace-tag-btn"
+              >
+                Replace tag
+              </Button>
+            )}
+          </div>
+          {animal.is_temp_tag && (
+            <p
+              className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800"
+              data-testid="temp-tag-banner"
+            >
+              ⚠ Temporary tag — replace when the animal is physically tagged
+            </p>
+          )}
           {animal.name && <p className="text-lg text-muted-foreground">{animal.name}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -460,6 +550,51 @@ function TimelineTab({ items, loading, canWrite, onAddNote }) {
               <p className="text-sm text-muted-foreground">{fmt(item.date)}</p>
               <p className="font-medium">{item.title}</p>
               {item.detail && <p className="text-sm text-muted-foreground whitespace-pre-line">{item.detail}</p>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab 5: movement history (backend: animal_location_history, decision 0009)
+// ---------------------------------------------------------------------------
+function MovementHistoryTab({ items, loading }) {
+  return (
+    <div className="space-y-4" data-testid="movement-history-tab">
+      {loading ? (
+        <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No location history recorded — movements are logged automatically when transfer events are saved
+        </p>
+      ) : (
+        <ol>
+          {items.map((m) => (
+            <li
+              key={m.id}
+              className="relative ml-1.5 border-l-2 border-border pb-5 pl-5 last:border-transparent"
+              data-testid={`movement-${m.id}`}
+            >
+              <span className="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-blue-600" />
+              <p className="text-sm text-muted-foreground">{fmt(m.moved_date)}</p>
+              {m.from_location_id || m.from_location_name ? (
+                <p className="font-medium flex flex-wrap items-center gap-2">
+                  <span>From {m.from_location_name || `location ${m.from_location_id}`}</span>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                  <span>To {m.to_location_name || `location ${m.to_location_id}`}</span>
+                </p>
+              ) : (
+                <p className="font-medium">
+                  First recorded location: {m.to_location_name || `location ${m.to_location_id}`}
+                </p>
+              )}
+              {m.event_id && (
+                <Badge className="mt-1 bg-blue-100 text-blue-700 normal-case">via transfer event</Badge>
+              )}
+              {m.notes && <p className="text-sm text-muted-foreground whitespace-pre-line mt-1">{m.notes}</p>}
             </li>
           ))}
         </ol>
@@ -844,10 +979,12 @@ function AnimalDetail() {
   const [history, setHistory] = useState(null);
   const [bcs, setBcs] = useState([]);
   const [notes, setNotes] = useState([]);
+  const [locHistory, setLocHistory] = useState([]);
   const [loading, setLoading] = useState({
-    animal: true, photos: true, timeline: true, history: true, bcs: true, notes: true,
+    animal: true, photos: true, timeline: true, history: true, bcs: true, notes: true, locHistory: true,
   });
   const [noteDialog, setNoteDialog] = useState(false);
+  const [replaceDialog, setReplaceDialog] = useState(false);
 
   const markLoaded = useCallback((key) => setLoading((l) => ({ ...l, [key]: false })), []);
 
@@ -872,9 +1009,19 @@ function AnimalDetail() {
     [id, markLoaded]
   );
 
+  const loadLocHistory = useCallback(
+    () => getAnimalLocationHistory(id).then((r) => setLocHistory(r.data)).catch(failToast('movement history')).finally(() => markLoaded('locHistory')),
+    [id, markLoaded]
+  );
+
+  const reloadAnimal = useCallback(
+    () => getAnimalDetail(id).then((r) => setAnimal(r.data)).catch(failToast('animal')),
+    [id]
+  );
+
   useEffect(() => {
     setNotFound(false);
-    setLoading({ animal: true, photos: true, timeline: true, history: true, bcs: true, notes: true });
+    setLoading({ animal: true, photos: true, timeline: true, history: true, bcs: true, notes: true, locHistory: true });
     getAnimalDetail(id)
       .then((r) => setAnimal(r.data))
       .catch((err) => {
@@ -882,8 +1029,8 @@ function AnimalDetail() {
         else toast.error('Failed to load animal');
       })
       .finally(() => markLoaded('animal'));
-    loadPhotos(); loadTimeline(); loadHistory(); loadBcs(); loadNotes();
-  }, [id, markLoaded, loadPhotos, loadTimeline, loadHistory, loadBcs, loadNotes]);
+    loadPhotos(); loadTimeline(); loadHistory(); loadBcs(); loadNotes(); loadLocHistory();
+  }, [id, markLoaded, loadPhotos, loadTimeline, loadHistory, loadBcs, loadNotes, loadLocHistory]);
 
   const afterNoteChange = () => { loadNotes(); loadTimeline(); };
   const afterCycleChange = () => { loadHistory(); loadTimeline(); };
@@ -916,7 +1063,7 @@ function AnimalDetail() {
             animalId={animal.id} photos={photos} loading={loading.photos}
             canWrite={isDataEntry} isAdmin={isAdmin} onChanged={loadPhotos}
           />
-          <IdentityCard animal={animal} canWrite={isDataEntry} isAdmin={isAdmin} />
+          <IdentityCard animal={animal} canWrite={isDataEntry} isAdmin={isAdmin} onReplaceTag={() => setReplaceDialog(true)} />
         </div>
         <div className="lg:col-span-2">
           <Tabs defaultValue="timeline">
@@ -925,6 +1072,7 @@ function AnimalDetail() {
               <TabsTrigger value="reproduction">Reproduction</TabsTrigger>
               <TabsTrigger value="bcs">BCS</TabsTrigger>
               <TabsTrigger value="notes">Notes</TabsTrigger>
+              <TabsTrigger value="movements">Movement history</TabsTrigger>
             </TabsList>
             <TabsContent value="timeline" className="pt-4">
               <TimelineTab items={timeline} loading={loading.timeline} canWrite={isDataEntry} onAddNote={() => setNoteDialog(true)} />
@@ -944,9 +1092,13 @@ function AnimalDetail() {
                 isAdmin={isAdmin} onChanged={afterNoteChange} onAddNote={() => setNoteDialog(true)}
               />
             </TabsContent>
+            <TabsContent value="movements" className="pt-4">
+              <MovementHistoryTab items={locHistory} loading={loading.locHistory} />
+            </TabsContent>
           </Tabs>
         </div>
       </div>
+      <ReplaceTagDialog open={replaceDialog} onClose={() => setReplaceDialog(false)} animal={animal} onReplaced={reloadAnimal} />
       <AddNoteDialog open={noteDialog} onClose={() => setNoteDialog(false)} onSaved={afterNoteChange} animalId={animal.id} />
     </div>
   );

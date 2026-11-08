@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   getAnimals, createAnimal, updateAnimal, transferAnimal,
   bulkImportAnimals, downloadAnimalsTemplate, getLocations, getCategories,
+  getRegisterReconciliation,
 } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -15,9 +16,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Skeleton } from '../components/ui/skeleton';
-import { Tag, Plus, UploadSimple, DownloadSimple, ArrowsLeftRight } from '@phosphor-icons/react';
+import { Switch } from '../components/ui/switch';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../components/ui/collapsible';
+import {
+  Tag, Plus, UploadSimple, DownloadSimple, ArrowsLeftRight, CaretDown, CaretRight, ArrowClockwise,
+} from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { formatDate, SPECIES_CONFIG } from '../lib/utils';
+import {
+  coverageTone, sortReconciliationRows, summariseReconciliation, TONE_BG, TONE_TEXT,
+} from '../lib/registerCoverage';
 
 const STATUS_BADGE = {
   active: 'bg-green-100 text-green-700',
@@ -59,6 +67,116 @@ function StatusBadge({ status }) {
   );
 }
 
+function GapCell({ row }) {
+  if (row.unregistered > 0) {
+    return <span className="text-red-600 font-medium">{row.unregistered} unregistered</span>;
+  }
+  if (row.unregistered < 0) {
+    return <span className="text-amber-600 font-medium">{Math.abs(row.unregistered)} extra in register</span>;
+  }
+  return <span className="text-green-600 font-medium">✓ Matched</span>;
+}
+
+// Collapsible "Register completeness" panel (data: GET /api/animals/register-reconciliation).
+function RegisterCompletenessPanel({ open, onOpenChange, rows, loading, error, onRefresh }) {
+  const summary = rows ? summariseReconciliation(rows) : null;
+  const sorted = rows ? sortReconciliationRows(rows) : [];
+
+  let chip = null;
+  if (loading && !rows) {
+    chip = <span className="text-xs text-muted-foreground">Checking…</span>;
+  } else if (error && !rows) {
+    chip = <span className="text-xs text-muted-foreground">Unavailable</span>;
+  } else if (summary && summary.pct !== null) {
+    chip = (
+      <>
+        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${TONE_BG[coverageTone(summary.pct)]}`}>
+          {summary.pct}% registered across all farms
+        </span>
+        {summary.attentionFarms > 0 && (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${TONE_BG.red}`}>
+            {summary.attentionFarms} farm{summary.attentionFarms !== 1 ? 's' : ''} need{summary.attentionFarms === 1 ? 's' : ''} attention
+          </span>
+        )}
+      </>
+    );
+  } else if (summary) {
+    chip = <span className="text-xs text-muted-foreground">No stock to compare</span>;
+  }
+
+  return (
+    <Card className="border-border/60" data-testid="register-completeness-panel">
+      <Collapsible open={open} onOpenChange={onOpenChange}>
+        <div className="flex items-center justify-between gap-2 p-3">
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" className="gap-2 px-2 flex-wrap h-auto" data-testid="register-completeness-toggle">
+              {open ? <CaretDown className="h-4 w-4" /> : <CaretRight className="h-4 w-4" />}
+              <span className="font-heading font-semibold">Register completeness</span>
+              {chip}
+            </Button>
+          </CollapsibleTrigger>
+          {open && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onRefresh}
+              disabled={loading}
+              aria-label="Refresh register completeness"
+              data-testid="register-completeness-refresh"
+            >
+              <ArrowClockwise className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
+          )}
+        </div>
+        <CollapsibleContent>
+          <div className="px-3 pb-3 space-y-2">
+            {error && !rows ? (
+              <p className="text-sm text-red-600">Could not load register completeness. Use refresh to try again.</p>
+            ) : !rows ? (
+              <Skeleton className="h-24" />
+            ) : sorted.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No stock or registered animals to compare yet.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Farm</TableHead>
+                    <TableHead>Species</TableHead>
+                    <TableHead className="text-right">Stock (events)</TableHead>
+                    <TableHead className="text-right">Registered</TableHead>
+                    <TableHead className="text-right">Coverage %</TableHead>
+                    <TableHead>Gap</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sorted.map(function (r) {
+                    const tone = coverageTone(r.registered_pct);
+                    return (
+                      <TableRow key={`${r.location_id}-${r.species}`}>
+                        <TableCell className="font-medium">{r.location_name}</TableCell>
+                        <TableCell><SpeciesBadge species={r.species} /></TableCell>
+                        <TableCell className="text-right">{r.stock_count}</TableCell>
+                        <TableCell className="text-right">{r.registered_active}</TableCell>
+                        <TableCell className={`text-right font-semibold ${TONE_TEXT[tone]}`}>
+                          {r.registered_pct === null || r.registered_pct === undefined ? '—' : `${Math.round(r.registered_pct)}%`}
+                        </TableCell>
+                        <TableCell><GapCell row={r} /></TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Stock counts from event log · Register counts active animals only
+            </p>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
+  );
+}
+
 function Animals() {
   const [animals, setAnimals] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -67,7 +185,9 @@ function Animals() {
 
   const [filterSpecies, setFilterSpecies] = useState('all');
   const [filterLocation, setFilterLocation] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('active');
+  const [filterTempOnly, setFilterTempOnly] = useState(false);
+  const tempFilterMounted = useRef(false);
   const [search, setSearch] = useState('');
 
   const [selectedAnimal, setSelectedAnimal] = useState(null);
@@ -94,8 +214,49 @@ function Animals() {
   // after the dialog closes (saved or cancelled) we go back to that profile.
   const [returnTo, setReturnTo] = useState(null);
 
+  // Register completeness panel (opened by the Dashboard link: /animals?panel=register)
+  const [regOpen, setRegOpen] = useState(searchParams.get('panel') === 'register');
+  const [regRows, setRegRows] = useState(null);
+  const [regLoading, setRegLoading] = useState(true);
+  const [regError, setRegError] = useState(false);
+
+  async function loadReconciliation(showToast) {
+    setRegLoading(true);
+    setRegError(false);
+    try {
+      const res = await getRegisterReconciliation();
+      setRegRows(res.data);
+    } catch {
+      setRegError(true);
+      if (showToast) toast.error('Failed to load register completeness');
+    } finally {
+      setRegLoading(false);
+    }
+  }
+
+  // "Temp tags only" re-fetches with is_temp_tag=true (skipped on first render: loadData does the initial load)
+  async function loadAnimalsOnly() {
+    try {
+      const res = await getAnimals(filterTempOnly ? { is_temp_tag: true } : undefined);
+      setAnimals(res.data);
+    } catch {
+      toast.error('Failed to load animals');
+    }
+  }
+
+  useEffect(function () {
+    if (!tempFilterMounted.current) {
+      tempFilterMounted.current = true;
+      return;
+    }
+    loadAnimalsOnly();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterTempOnly]);
+
   useEffect(function () {
     loadData();
+    loadReconciliation(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(function () {
@@ -139,7 +300,7 @@ function Animals() {
     }
 
     try {
-      const animalsRes = await getAnimals();
+      const animalsRes = await getAnimals(filterTempOnly ? { is_temp_tag: true } : undefined);
       setAnimals(animalsRes.data);
     } catch {
       toast.error('Failed to load animals');
@@ -158,6 +319,15 @@ function Animals() {
     }
     return true;
   });
+
+  const animalWord = filteredAnimals.length === 1 ? 'animal' : 'animals';
+  const statusSuffix = filterStatus === 'active' ? ' (active)'
+    : filterStatus === 'all' ? ' (all statuses)' : ` (${filterStatus})`;
+  let countLabel;
+  if (filterTempOnly) countLabel = `${filteredAnimals.length} temp-tagged ${animalWord}${statusSuffix}`;
+  else if (filterStatus === 'active') countLabel = `${filteredAnimals.length} active ${animalWord}`;
+  else if (filterStatus === 'all') countLabel = `${filteredAnimals.length} ${animalWord} (all statuses)`;
+  else countLabel = `${filteredAnimals.length} ${filterStatus} ${animalWord}`;
 
   const formCategories = categories.filter(function (c) { return c.species === formData.species; });
 
@@ -308,6 +478,7 @@ function Animals() {
         <div>
           <h1 className="font-heading text-3xl font-bold">Animals</h1>
           <p className="text-muted-foreground mt-1">Track individual animals by tag number</p>
+          <p className="text-sm font-medium mt-1" data-testid="animals-count">{countLabel}</p>
         </div>
         <div className="flex gap-2">
           {isAdmin && (
@@ -331,6 +502,16 @@ function Animals() {
           )}
         </div>
       </div>
+
+      {/* Register completeness (collapsed by default) */}
+      <RegisterCompletenessPanel
+        open={regOpen}
+        onOpenChange={setRegOpen}
+        rows={regRows}
+        loading={regLoading}
+        error={regError}
+        onRefresh={function () { loadReconciliation(true); }}
+      />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
@@ -378,6 +559,16 @@ function Animals() {
           onChange={function (e) { setSearch(e.target.value); }}
           className="w-52"
         />
+
+        <div className="flex items-center gap-2">
+          <Switch
+            id="temp-tags-only"
+            checked={filterTempOnly}
+            onCheckedChange={setFilterTempOnly}
+            data-testid="temp-tags-switch"
+          />
+          <Label htmlFor="temp-tags-only" className="cursor-pointer text-sm">Temp tags only</Label>
+        </div>
       </div>
 
       {/* Table */}
@@ -431,9 +622,9 @@ function Animals() {
           <CardContent className="py-12 text-center">
             <Tag className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
             <p className="text-muted-foreground mb-4">
-              {animals.length === 0 ? 'No animals registered yet' : 'No animals match your filters'}
+              {animals.length === 0 && !filterTempOnly ? 'No animals registered yet' : 'No animals match your filters'}
             </p>
-            {animals.length === 0 && (isAdmin || isDataEntry) && (
+            {animals.length === 0 && !filterTempOnly && (isAdmin || isDataEntry) && (
               <Button onClick={function () { handleOpenAddDialog(null); }} className="gap-2">
                 <Plus className="h-4 w-4" />
                 Add Your First Animal

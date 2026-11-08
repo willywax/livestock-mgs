@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Calendar } from '../components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Badge } from '../components/ui/badge';
-import { CalendarBlank, MapPin, Plus, Trash, ArrowLeft, CheckCircle } from '@phosphor-icons/react';
+import AnimalTagPicker, { parseTags } from '../components/AnimalTagPicker';
+import { CalendarBlank, MapPin, Plus, Trash, ArrowLeft, CheckCircle, X } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { SPECIES_CONFIG, EVENT_TYPES } from '../lib/utils';
 import { format } from 'date-fns';
@@ -33,15 +34,145 @@ const DEATH_CAUSES = [
   'Birthing Complications', 'Malnutrition', 'Unknown', 'Other'
 ];
 
+// Event types whose animals already exist in the register -> searchable picker.
+// bought / gift_in (animals not registered yet) and birth keep the plain text input.
+const PICKER_EVENT_TYPES = ['death', 'sold', 'missing', 'gift_out', 'transfer', 'category_change', 'weaning', 'abortion'];
+
 const ABORTION_STAGES = [
   { value: 'early', label: 'Early (0-3 months)' },
   { value: 'mid', label: 'Mid (3-6 months)' },
   { value: 'late', label: 'Late (6-9 months)' }
 ];
 
-function EventFormItem({ event, index, categories, locations, diseases, onUpdate, onRemove }) {
+// Offspring tags string sent to the backend: real tags as typed, untagged rows as empty entries
+// ("KK-001, , KK-003"). When EVERY row is untagged the string is blank, so the backend creates
+// `count` temp-tag animals (and an edited Count is respected).
+function buildOffspringTags(rows) {
+  if (rows.every(function(r) { return !r.has_tag; })) return '';
+  return rows.map(function(r) { return r.has_tag ? r.tag.trim() : ''; }).join(', ');
+}
+
+function OffspringEntries({ event, index, locationName, logDate, onPatch }) {
+  const rows = event.offspring_rows && event.offspring_rows.length > 0
+    ? event.offspring_rows
+    : [{ has_tag: true, tag: '' }];
+  const allTemp = rows.every(function(r) { return !r.has_tag; });
+  const countNum = parseInt(event.count, 10) || 0;
+  const prefix = (locationName || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'UNK';
+  const example = `TEMP-${prefix}-${format(logDate, 'yyyyMMdd')}-001 (example)`;
+
+  // Count follows the number of rows only when rows are added/removed (so typing never overwrites it)
+  function commit(nextRows, resizeCount) {
+    const patch = { offspring_rows: nextRows, offspring_tags: buildOffspringTags(nextRows) };
+    if (resizeCount) patch.count = nextRows.length;
+    onPatch(index, patch);
+  }
+  function setRow(i, change) {
+    commit(rows.map(function(r, k) { return k === i ? { ...r, ...change } : r; }), false);
+  }
+
+  return (
+    <div className="space-y-2" data-testid={`offspring-entries-${index}`}>
+      {rows.map(function(row, i) {
+        return (
+          <div key={i} className="flex items-center gap-2" data-testid={`offspring-row-${index}-${i}`}>
+            <div className="flex shrink-0 rounded-md border border-input p-0.5">
+              <Button
+                type="button"
+                size="sm"
+                variant={row.has_tag ? 'default' : 'ghost'}
+                className="h-7 px-2 text-xs"
+                onClick={function() { setRow(i, { has_tag: true }); }}
+                data-testid={`offspring-has-tag-${index}-${i}`}
+              >
+                Has tag
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={!row.has_tag ? 'default' : 'ghost'}
+                className="h-7 px-2 text-xs"
+                onClick={function() { setRow(i, { has_tag: false }); }}
+                data-testid={`offspring-no-tag-${index}-${i}`}
+              >
+                No tag yet
+              </Button>
+            </div>
+            {row.has_tag ? (
+              <Input
+                value={row.tag}
+                onChange={function(e) { setRow(i, { tag: e.target.value }); }}
+                placeholder="Newborn tag number"
+                data-testid={`offspring-tag-${index}-${i}`}
+              />
+            ) : allTemp ? (
+              <span className="flex-1 text-xs text-muted-foreground">Temp tag</span>
+            ) : (
+              <Input
+                disabled
+                value=""
+                placeholder={example}
+                title="Temp tag will be auto-generated"
+                data-testid={`offspring-temp-${index}-${i}`}
+              />
+            )}
+            {i === 0 ? (
+              <span className="h-9 w-9 shrink-0" aria-hidden="true" />
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="shrink-0"
+                aria-label={`Remove offspring ${i + 1}`}
+                onClick={function() { commit(rows.filter(function(_, k) { return k !== i; }), true); }}
+                data-testid={`offspring-remove-${index}-${i}`}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        );
+      })}
+      {allTemp && (
+        <p className="text-xs text-amber-700" data-testid={`offspring-temp-note-${index}`}>
+          {countNum > 0
+            ? `${countNum} temp tag${countNum !== 1 ? 's' : ''} will be auto-generated based on count (e.g. ${example.replace(' (example)', '')})`
+            : 'Set a count above 0 to auto-generate temp tags'}
+        </p>
+      )}
+      {!allTemp && rows.some(function(r) { return !r.has_tag; }) && (
+        <p className="text-xs text-muted-foreground">Temp tag will be auto-generated for “No tag yet” rows</p>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="gap-1"
+        onClick={function() { commit(rows.concat({ has_tag: true, tag: '' }), true); }}
+        data-testid={`offspring-add-${index}`}
+      >
+        <Plus className="h-3 w-3" />
+        Add offspring
+      </Button>
+    </div>
+  );
+}
+
+function EventFormItem({ event, index, categories, locations, diseases, locationId, logDate, onUpdate, onPatch, onRemove }) {
   const speciesCategories = categories[event.species] || [];
   const eventType = event.event_type;
+  const usePicker = PICKER_EVENT_TYPES.includes(eventType);
+  const logLocation = locations.find(function(l) { return String(l.id) === String(locationId); });
+  // Animals being transferred live at the source location; otherwise the log's location.
+  const pickerLocationId = eventType === 'transfer' ? (event.from_location_id || locationId) : locationId;
+  const pickerCategoryId = eventType === 'category_change' ? event.from_category_id : event.category_id;
+
+  // Picking animals fills Count with the number picked (still editable afterwards).
+  function handlePickedTags(next) {
+    const n = parseTags(next).length;
+    onPatch(index, n > 0 ? { animal_tags: next, count: n } : { animal_tags: next });
+  }
   return (
     <div className="p-4 rounded-lg border border-border bg-muted/30 space-y-4" data-testid={`event-${index}`}>
       <div className="flex items-center justify-between">
@@ -96,12 +227,23 @@ function EventFormItem({ event, index, categories, locations, diseases, onUpdate
 
       <div className="space-y-2">
         <Label>Animal Tag(s)</Label>
-        <Input
-          value={event.animal_tags || ''}
-          onChange={(e) => onUpdate(index, 'animal_tags', e.target.value)}
-          placeholder="Enter tag numbers (comma-separated for multiple)"
-          data-testid={`tags-${index}`}
-        />
+        {usePicker ? (
+          <AnimalTagPicker
+            locationId={pickerLocationId}
+            species={event.species}
+            categoryId={pickerCategoryId}
+            value={event.animal_tags || ''}
+            onChange={handlePickedTags}
+            testId={`tags-${index}`}
+          />
+        ) : (
+          <Input
+            value={event.animal_tags || ''}
+            onChange={(e) => onUpdate(index, 'animal_tags', e.target.value)}
+            placeholder="Enter tag numbers (comma-separated for multiple)"
+            data-testid={`tags-${index}`}
+          />
+        )}
       </div>
 
       {eventType !== 'category_change' && eventType !== 'abortion' && (
@@ -192,20 +334,25 @@ function EventFormItem({ event, index, categories, locations, diseases, onUpdate
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-green-50 rounded-lg">
           <div className="space-y-2">
             <Label>Mother Tag (Dam)</Label>
-            <Input
+            <AnimalTagPicker
+              locationId={locationId}
+              species={event.species}
+              sex="female"
+              maxSelect={1}
               value={event.mother_tag || ''}
-              onChange={(e) => onUpdate(index, 'mother_tag', e.target.value)}
-              placeholder="Mother (dam) tag"
-              data-testid={`mother-tag-${index}`}
+              onChange={(v) => onUpdate(index, 'mother_tag', v)}
+              placeholder="Search dam by tag or name..."
+              testId={`mother-tag-${index}`}
             />
           </div>
           <div className="space-y-2">
             <Label>Offspring Tag(s)</Label>
-            <Input
-              value={event.offspring_tags || ''}
-              onChange={(e) => onUpdate(index, 'offspring_tags', e.target.value)}
-              placeholder="Newborn tag(s), comma-separated"
-              data-testid={`offspring-tags-${index}`}
+            <OffspringEntries
+              event={event}
+              index={index}
+              locationName={logLocation ? logLocation.name : ''}
+              logDate={logDate}
+              onPatch={onPatch}
             />
           </div>
         </div>
@@ -438,6 +585,7 @@ function NewDailyLog() {
       abortion_stage: '',
       mother_tag: '',
       offspring_tags: '',
+      offspring_rows: [{ has_tag: true, tag: '' }],
       buyer_name: '',
       buyer_phone: '',
       buyer_address: '',
@@ -470,6 +618,13 @@ function NewDailyLog() {
     setEvents(newEvents);
   }
 
+  // Update several fields of one event atomically (functional update, safe to call back-to-back)
+  function patchEvent(index, patch) {
+    setEvents(function(prev) {
+      return prev.map(function(ev, i) { return i === index ? { ...ev, ...patch } : ev; });
+    });
+  }
+
   function removeEvent(index) {
     setEvents(events.filter(function(_, i) { return i !== index; }));
   }
@@ -487,6 +642,19 @@ function NewDailyLog() {
 
     for (let i = 0; i < events.length; i++) {
       const event = events[i];
+      if (event.event_type === 'birth') {
+        const rows = event.offspring_rows || [];
+        for (let r = 0; r < rows.length; r++) {
+          if (rows[r].has_tag && !rows[r].tag.trim()) {
+            toast.error(`Event ${i + 1}: Offspring ${r + 1} needs a tag number, or choose "No tag yet"`);
+            return;
+          }
+          if (rows[r].has_tag && rows[r].tag.includes(',')) {
+            toast.error(`Event ${i + 1}: Offspring ${r + 1} tag cannot contain a comma`);
+            return;
+          }
+        }
+      }
       if (event.event_type === 'transfer') {
         if (!event.from_location_id || !event.to_location_id) {
           toast.error(`Event ${i + 1}: Transfer requires both source and destination locations`);
@@ -669,7 +837,10 @@ function NewDailyLog() {
                   categories={categories}
                   locations={locations}
                   diseases={diseases}
+                  locationId={locationId}
+                  logDate={logDate}
                   onUpdate={updateEvent}
+                  onPatch={patchEvent}
                   onRemove={removeEvent}
                 />
               );
