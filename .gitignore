@@ -83,3 +83,12 @@ frontend/node_modules/.cache/default-development/0.pack
 .env
 /frontend/.env
 /backend/.env
+
+# Claude Code local-only files
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Local data, logs, caches (never commit)
+*.db
+*.log
+.pytest_cache/
