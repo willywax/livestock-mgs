@@ -157,4 +157,21 @@ export const getBCSRecords = (params) => api.get('/bcs-records', { params });
 export const createBCSRecord = (data) => api.post('/bcs-records', data);
 export const searchAnimals = (params) => api.get('/animals', { params });
 
+// Animal profile (backend: docs/decisions/0008)
+export const getAnimalDetail = (id) => api.get(`/animals/${id}`);
+export const getAnimalTimeline = (id) => api.get(`/animals/${id}/timeline`);
+export const getAnimalReproductiveHistory = (id) => api.get(`/animals/${id}/reproductive-history`);
+export const getAnimalPhotos = (id) => api.get(`/animals/${id}/photos`);
+export const uploadAnimalPhoto = (id, formData) =>
+  api.post(`/animals/${id}/photos`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+export const updateAnimalPhoto = (id, photoId, data) => api.put(`/animals/${id}/photos/${photoId}`, data);
+export const deleteAnimalPhoto = (id, photoId) => api.delete(`/animals/${id}/photos/${photoId}`);
+export const getAnimalNotes = (id) => api.get(`/animals/${id}/notes`);
+export const createAnimalNote = (id, data) => api.post(`/animals/${id}/notes`, data);
+export const updateAnimalNote = (id, noteId, data) => api.put(`/animals/${id}/notes/${noteId}`, data);
+export const deleteAnimalNote = (id, noteId) => api.delete(`/animals/${id}/notes/${noteId}`);
+export const getAnimalBCSHistory = (id) => api.get('/bcs-records', { params: { animal_id: id } });
+
 export default api;
