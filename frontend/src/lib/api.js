@@ -143,4 +143,18 @@ export const updateVaccineType = (id, data) => api.put(`/vaccine-types/${id}`, d
 export const deleteVaccineType = (id) => api.delete(`/vaccine-types/${id}`);
 export const getLastVaccinations = () => api.get('/farm-health-events/last-vaccinations');
 
+// Reproduction (backend: docs/decisions/0008)
+export const getReproductionAnalytics = (locationId, year) =>
+  api.get('/analytics/reproduction', { params: { location_id: locationId, year } });
+export const getReproductiveCycles = (params) => api.get('/reproductive-cycles', { params });
+export const getReproductiveCycle = (id) => api.get(`/reproductive-cycles/${id}`);
+export const createReproductiveCycle = (data) => api.post('/reproductive-cycles', data);
+export const updateReproductiveCycle = (id, data) => api.put(`/reproductive-cycles/${id}`, data);
+export const getBullAssignments = (params) => api.get('/bull-assignments', { params });
+export const createBullAssignment = (data) => api.post('/bull-assignments', data);
+export const updateBullAssignment = (id, data) => api.put(`/bull-assignments/${id}`, data);
+export const getBCSRecords = (params) => api.get('/bcs-records', { params });
+export const createBCSRecord = (data) => api.post('/bcs-records', data);
+export const searchAnimals = (params) => api.get('/animals', { params });
+
 export default api;

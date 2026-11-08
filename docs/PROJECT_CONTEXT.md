@@ -11,7 +11,7 @@ Line numbers quoted from the repo analysis drift quickly; treat them as hints an
 - Users (roles): `admin`, `data_entry` (office staff entering logs), `viewer` (read-only). Login is by phone number + password (JWT).
 - Status: actively developed, in use (Unverified: the repo's deploy guide names live domains, but no deployment was inspected).
 - Last updated: 2026-11-08.
-- Branch/commit: working branch `ft/repro-schema` (reproduction/profile backend, created from local `main` at `de065a0`; its changes are not yet committed). Local `main` already contains the Claude setup, the Registry removal, the auth hardening (R1) and the first test suite via fast-forward (2026-11-08); `main` is ~14 commits ahead of `origin/main` and nothing has been pushed. Older local branches `chore/claude-setup`, `chore/remove-registry`, `ft/r1-auth-hardening` are ancestors of `main`; `ft-edit-event`, `ft-schedule`, `new-ft` appear stale/merged (Unverified).
+- Branch/commit: working branch `ft/repro-frontend` (Reproduction dashboard and dialogs, frontend only; created from `ft/repro-schema` at `0721926`; its changes are not yet committed). `ft/repro-schema` holds the committed reproduction/animal-profile backend (`0721926`), on top of local `main` at `de065a0`. Local `main` contains the Claude setup, the Registry removal, the auth hardening (R1) and the first test suite via fast-forward (2026-11-08); it is ~14 commits ahead of `origin/main` and nothing has been pushed. Older local branches `chore/claude-setup`, `chore/remove-registry`, `ft/r1-auth-hardening` are ancestors of `main`; `ft-edit-event`, `ft-schedule`, `new-ft` appear stale/merged (Unverified).
 - Application code changed only for the reproduction/animal-profile backend (branch `ft/repro-schema`, from `main` at `de065a0`): 5 new tables, 5 new enums, 24 new routes, no existing class/column/route/enum modified. Frontend untouched.
 
 ## 3. Tech stack
@@ -46,10 +46,10 @@ livestock-mgs/
     tests/                  conftest.py + test_auth/test_stock/test_events/test_reproduction (SQLite in-memory, runnable) + 3 live-HTTP modules (off-limits)
   frontend/
     src/App.js              all routes; src/index.js entry
-    src/pages/              Dashboard, Locations, LocationDetail, Animals, FarmHealth, DailyLogs,
+    src/pages/              Dashboard, Locations, LocationDetail, Animals, Reproduction, FarmHealth, DailyLogs,
                             DailyLogDetail, NewDailyLog, OpeningBalances, Reports, Users, Settings,
                             Login
-    src/components/         Layout.jsx, ui/ (46 shadcn-style primitives)
+    src/components/         Layout.jsx, ReproductionDialogs.jsx, ui/ (46 shadcn-style primitives)
     src/context/AuthContext.js   session/role state
     src/lib/api.js          Axios wrapper, token interceptor
     plugins/                CRACO dev plugins (health-check, visual-edits)
@@ -87,7 +87,7 @@ Omitted: `.venv`, `node_modules`, `frontend/build`, caches, `.git`. Also present
 - Frontend route guards (in `App.js`/`Layout.jsx`) are UI-only; backend enforcement is what counts.
 - Every business endpoint requires a JWT; public: health, login, three CSV templates (`docs/KNOWN_ISSUES.md` K21). Per-route auth: `docs/context/api.md`.
 
-**Frontend routes** (`frontend/src/App.js`): `/login`, `/`, `/locations`, `/locations/:id`, `/animals`, `/farm-health`, `/daily-logs`, `/daily-logs/new`, `/daily-logs/:id`, `/opening-balances`, `/reports`, `/admin/users`, `/settings`.
+**Frontend routes** (`frontend/src/App.js`): `/login`, `/`, `/locations`, `/locations/:id`, `/animals`, `/reproduction`, `/farm-health`, `/daily-logs`, `/daily-logs/new`, `/daily-logs/:id`, `/opening-balances`, `/reports`, `/admin/users`, `/settings`.
 
 ## 6. Data model
 Tables (all in `backend/models.py`; full column list in `docs/context/data-model.md`): `users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types` (12), plus the reproduction/profile tables `bull_assignments`, `reproductive_cycles`, `bcs_records`, `animal_photos`, `animal_notes` (17 in total; decision 0008). A legacy table `registry_sync_outbox` still exists in the database without a model (inert; never drop).
@@ -172,8 +172,8 @@ Everything below is in the repo on branch `chore/claude-setup` (not yet merged).
 
 ## 10. Current work
 Recent commits on `main` (newest first): `9b72555` Support registry tag edits and birth counts by sex; `114b280`, `4baae11` changes to tags; `9c52010` view extra details in edit logs; `56f3558` logs and vaccines; `f1f227e` animals. The Registry work in those commits was removed on branch `chore/remove-registry`. Most-changed files before that: `backend/server.py`, `backend/schemas.py`, `frontend/src/pages/NewDailyLog.jsx`, `DailyLogDetail.jsx`, `frontend/src/lib/api.js`.
-In progress: the backend reproduction/animal-profile schema and routes (5 tables, 24 routes; decision 0008) on `ft/repro-schema`, with no frontend yet (ROADMAP R12). R1 auth hardening put JWT auth on 13 previously open GET routes; health, login and three CSV template downloads stay public (K21). Next candidates: ROADMAP R2 (fail-closed secrets, owner rotates credentials), R4 remainder (Postgres-backed tests), R12 frontend, K22 verification on a real PostgreSQL DB and GCS bucket. No other open tasks identified (Unverified: no tracker).
-Known issues: `docs/KNOWN_ISSUES.md` (open: K01, K07, K11, K14-K22; K02 closed on ft/r1-auth-hardening; K03-K06, K08-K10, K12-K13 resolved by the removal). Headline themes only: credential hygiene, public CSV templates (K21), concurrency, thin test coverage (SQLite suite only for auth/stock/events), and inert legacy Registry data to clean up by the owner. Credentials that were once committed must be rotated by the owner.
+In progress: the Reproduction dashboard page and shared dialogs (`/reproduction`; species-aware gestation, terminology and interval thresholds) on `ft/repro-frontend`, on top of the committed backend (5 tables, 24 routes; decision 0008). Still missing: an animal detail page (ROADMAP R12) and backend species support (R13, K23). R1 auth hardening put JWT auth on 13 previously open GET routes; health, login and three CSV template downloads stay public (K21). Next candidates: ROADMAP R2 (fail-closed secrets, owner rotates credentials), R4 remainder (Postgres-backed tests), R12, R13, K22 verification on a real PostgreSQL DB and GCS bucket. No other open tasks identified (Unverified: no tracker).
+Known issues: `docs/KNOWN_ISSUES.md` (open: K01, K07, K11, K14-K24; K02 closed on ft/r1-auth-hardening; K03-K06, K08-K10, K12-K13 resolved by the removal). Headline themes only: credential hygiene, public CSV templates (K21), concurrency, thin test coverage (SQLite suite only for auth/stock/events), and inert legacy Registry data to clean up by the owner. Credentials that were once committed must be rotated by the owner.
 
 ## 11. Roadmap
 Full table: `docs/ROADMAP.md` (sizes are estimates, Unverified). Dairy is out of scope (owner decision).
@@ -183,7 +183,8 @@ Full table: `docs/ROADMAP.md` (sizes are estimates, Unverified). Dairy is out of
 4. R8 Align deployment config; owner removes obsolete Registry env vars/scheduler — small.
 5. R10 Frontend tests + CI (needs approval) — medium.
 6. R11 Chemical rotation and notifications — large.
-7. R12 Frontend for reproduction and animal profile (backend done, decision 0008) — large.
+7. R12 Animal detail page (photos, notes, timeline, history); the dashboard is done — medium.
+8. R13 Backend species filter/gestation for reproduction (K23) — small.
 
 ## 12. Constraints
 Never, or only with explicit owner approval:
