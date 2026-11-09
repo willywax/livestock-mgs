@@ -1,4 +1,13 @@
 # Deployment
+## Verified release: 2026-11-09
+- Deployed application commit `816dac4` from a clean Git archive to existing project `elitagroup`, region `us-central1`.
+- Backend revision: `shamba-backend-816dac4`; frontend revision: `srcstock-816dac4`. Explicitly routed 100% of traffic to each new revision because the services retained traffic pins to `ff6314c` after deploy.
+- Images: `gcr.io/elitagroup/shamba-backend:816dac4` and `gcr.io/elitagroup/srcstock:816dac4`. Existing runtime environment and secret configuration retained.
+- Successful Cloud Builds: backend `a6d7688a-22e2-4c3d-a98e-39e1172cdad7`; frontend `5e0b1777-7927-4189-9382-16867f4c656d`.
+- Validation: 180 self-contained backend tests, 5 frontend regression tests, import smoke test, syntax lint and production builds passed. Local PostgreSQL 16 upgrade from `ff6314c` succeeded; repeated startup succeeded and all 26 ORM tables were readable. The separate temporary PostgreSQL container was stopped afterward.
+- Live checks: frontend and main JavaScript asset returned HTTP 200; API root returned its expected response. OpenAPI includes mortality, death-cause and reconciliation routes; unauthenticated mortality access returns HTTP 403. Interactive login and authenticated user workflows were not tested. External-server test suites were not part of release validation.
+- Rollback traffic targets: `shamba-backend-ff6314c` and `srcstock-ff6314c`. Use `gcloud run services update-traffic <service> --project elitagroup --region us-central1 --to-revisions <previous-revision>=100`. Leave additive schema changes in place; no production data rollback was attempted.
+
 ## Verified release: 2026-11-08
 - Deployed commit `57199a2` from a clean Git archive to project `elitagroup`, updating the existing services in `us-central1`.
 - Backend: `shamba-backend-00022-lrx`; frontend: `srcstock-00013-srg`; both serve 100% of traffic. Previous revisions: `shamba-backend-00021-gtc` and `srcstock-00012-c58`.
