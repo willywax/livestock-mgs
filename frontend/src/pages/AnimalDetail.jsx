@@ -6,7 +6,7 @@ import {
   CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
-  ArrowLeft, ArrowRight, ArrowsLeftRight, Camera, CaretDown, CaretRight, LinkSimple, Pencil, Plus, Star, Trash, Warning, X,
+  ArrowLeft, ArrowRight, ArrowsLeftRight, Baby, Camera, CaretDown, CaretRight, LinkSimple, Pencil, Plus, Star, Stethoscope, Trash, Warning, X,
 } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -15,6 +15,7 @@ import {
   getAnimalNotes, createAnimalNote, updateAnimalNote, deleteAnimalNote, getAnimalLocationHistory,
   replaceAnimalTag,
   getAnimalIdentifiers, createAnimalIdentifier, updateAnimalIdentifier,
+  getReproductiveSummary, listReproductiveEvents, createReproductiveEvent, getAnimals,
 } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -425,10 +426,10 @@ function Identifiers({ animalId, canWrite }) {
       toast.error(errText(err, 'Failed to save identifier'));
     } finally { setBusy(false); }
   };
-  const deactivate = async (item) => {
+  const toggleActive = async (item) => {
     setBusy(true);
     try {
-      await updateAnimalIdentifier(animalId, item.id, { is_active: false });
+      await updateAnimalIdentifier(animalId, item.id, { is_active: !item.is_active });
       toast.success('Identifier saved');
       await load();
     } catch (err) {
@@ -455,7 +456,7 @@ function Identifiers({ animalId, canWrite }) {
                 <TableCell className="whitespace-nowrap">{fmt(item.recorded_date)}</TableCell>
                 {canWrite && <TableCell><div className="flex gap-1">
                   <Button size="icon" variant="ghost" disabled={busy} aria-label={`Edit ${IDENTIFIER_LABELS[item.id_type]}`} onClick={() => open(item)}><Pencil className="h-4 w-4" /></Button>
-                  {item.is_active && <Button size="sm" variant="ghost" disabled={busy} onClick={() => deactivate(item)}>Deactivate</Button>}
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => toggleActive(item)}>{item.is_active ? 'Deactivate' : 'Activate'}</Button>
                 </div></TableCell>}
               </TableRow>
             ))}</TableBody>
@@ -483,7 +484,7 @@ function Identifiers({ animalId, canWrite }) {
   );
 }
 
-function IdentityCard({ animal, canWrite, isAdmin, onReplaceTag }) {
+function IdentityCard({ animal, canWrite, isAdmin, onReplaceTag, reproductiveSummary }) {
   const navigate = useNavigate();
   return (
     <Card data-testid="identity-card">
@@ -521,6 +522,19 @@ function IdentityCard({ animal, canWrite, isAdmin, onReplaceTag }) {
           <Badge className={SEX_BADGE[animal.sex]}>{animal.sex}</Badge>
           <span className="text-sm">{formatAge(animal.birth_date)}</span>
         </div>
+        {reproductiveSummary ? <div className="space-y-2" aria-label="Reproductive summary">
+          <Badge className={{ open: 'bg-green-100 text-green-700', pregnant: 'bg-blue-100 text-blue-700',
+            unknown: 'bg-gray-100 text-gray-600' }[reproductiveSummary.status] || 'bg-gray-100 text-gray-600'}>
+            {reproductiveSummary.status || 'unknown'}
+          </Badge>
+          {reproductiveSummary.status === 'pregnant' && reproductiveSummary.months_pregnant != null && (
+            <p className="text-sm">~{reproductiveSummary.months_pregnant} months pregnant</p>
+          )}
+          <p className="text-sm text-muted-foreground">Last {getTerms(animal.species).event.toLowerCase()}: {fmt(reproductiveSummary.last_calving_date)}</p>
+          {reproductiveSummary.is_repeat_breeder && <Badge className="bg-amber-100 text-amber-800">
+            Repeat breeder ({reproductiveSummary.services_without_conception} services)
+          </Badge>}
+        </div> : <p className="text-sm text-muted-foreground">Reproductive summary unavailable</p>}
         <p className="text-sm">{animal.location_name || '—'}</p>
         <div><Badge className={STATUS_BADGE[animal.status]}>{animal.status}</Badge></div>
         <p className="text-sm text-muted-foreground">
@@ -822,6 +836,146 @@ function CycleCard({ cycle, terms, species, isLatest, canWrite, onAction }) {
   );
 }
 
+const reproductiveLabels = (species) => ({ pd_test: 'PD Test', calving: getTerms(species).event, abortion: 'Abortion', service: 'Service' });
+const EVENT_ICONS = { pd_test: Stethoscope, calving: Baby, abortion: Warning, service: ArrowRight };
+
+function ReproductiveEventDialog({ animal, onClose, onSaved }) {
+  const [type, setType] = useState(null);
+  const [form, setForm] = useState({ event_date: toISODate(new Date()), pd_result: 'pregnant', months_pregnant: '',
+    calving_outcome: 'live', offspring_count: '1', abortion_stage: 'early', service_type: 'natural', bull_tag: '', vet: '', notes: '' });
+  const [busy, setBusy] = useState(false);
+  const labels = reproductiveLabels(animal.species);
+  const field = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const select = (key, label, options) => <div className="space-y-2">
+    <Label htmlFor={`repro-${key}`}>{label}</Label>
+    <Select value={form[key]} onValueChange={(value) => field(key, value)} disabled={busy}>
+      <SelectTrigger id={`repro-${key}`}><SelectValue /></SelectTrigger>
+      <SelectContent>{options.map(([value, title]) => <SelectItem key={value} value={value}>{title}</SelectItem>)}</SelectContent>
+    </Select>
+  </div>;
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const data = { event_type: type, event_date: form.event_date, notes: form.notes.trim() || null };
+      if (type === 'pd_test') {
+        data.pd_result = form.pd_result;
+        data.months_pregnant = form.pd_result === 'pregnant' && form.months_pregnant !== '' ? Number(form.months_pregnant) : null;
+        data.vet = form.vet.trim() || null;
+      } else if (type === 'calving') {
+        data.calving_outcome = form.calving_outcome;
+        data.offspring_count = Number(form.offspring_count);
+      } else if (type === 'abortion') data.abortion_stage = form.abortion_stage;
+      else if (type === 'service') {
+        data.service_type = form.service_type;
+        if (form.bull_tag.trim()) {
+          const tag = form.bull_tag.trim();
+          const { data: candidates } = await getAnimals({ search: tag, species: animal.species });
+          const matches = candidates.filter((item) => item.sex === 'male' && item.tag_number.toLowerCase() === tag.toLowerCase());
+          if (matches.length !== 1) {
+            toast.error(matches.length ? 'This tag matches multiple males. Use a unique tag.' : 'No male animal found with that tag for this species.');
+            return;
+          }
+          data.bull_animal_id = matches[0].id;
+        }
+      }
+      await createReproductiveEvent(animal.id, data);
+      toast.success('Event recorded');
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(errText(err, 'Failed to record event'));
+    } finally { setBusy(false); }
+  };
+
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+    <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogHeader><DialogTitle>{type ? `Record ${labels[type].toLowerCase()}` : 'Record reproductive event'}</DialogTitle>
+        <DialogDescription>{type ? 'Step 2 of 2: Enter event details.' : 'Step 1 of 2: Choose an event type.'}</DialogDescription></DialogHeader>
+      {!type ? <div className="grid grid-cols-2 gap-3">{Object.entries(labels).map(([value, label]) =>
+        <Button key={value} variant="outline" onClick={() => setType(value)}>{label}</Button>)}</div> : (
+        <form onSubmit={save} className="space-y-4">
+          <div className="space-y-2"><Label htmlFor="repro-date">Date</Label>
+            <Input id="repro-date" type="date" required value={form.event_date} disabled={busy} onChange={(e) => field('event_date', e.target.value)} /></div>
+          {type === 'pd_test' && <>
+            {select('pd_result', 'Result', [['pregnant', 'Pregnant'], ['open', 'Open'], ['recheck', 'Recheck']])}
+            {form.pd_result === 'pregnant' && <div className="space-y-2"><Label htmlFor="repro-months">Months pregnant (optional)</Label>
+              <Input id="repro-months" type="number" min="0" step="1" value={form.months_pregnant} disabled={busy} onChange={(e) => field('months_pregnant', e.target.value)} /></div>}
+            <div className="space-y-2"><Label htmlFor="repro-vet">Vet (optional)</Label>
+              <Input id="repro-vet" maxLength={100} value={form.vet} disabled={busy} onChange={(e) => field('vet', e.target.value)} /></div>
+          </>}
+          {type === 'calving' && <>
+            {select('calving_outcome', 'Outcome', [['live', 'Live'], ['stillbirth', 'Stillbirth']])}
+            <div className="space-y-2"><Label htmlFor="repro-count">Offspring count</Label>
+              <Input id="repro-count" type="number" min="0" step="1" required value={form.offspring_count} disabled={busy} onChange={(e) => field('offspring_count', e.target.value)} /></div>
+          </>}
+          {type === 'abortion' && select('abortion_stage', 'Stage', [['early', 'Early'], ['mid', 'Mid'], ['late', 'Late']])}
+          {type === 'service' && <>
+            {select('service_type', 'Type', [['natural', 'Natural'], ['ai', 'AI']])}
+            <div className="space-y-2"><Label htmlFor="repro-bull">{getTerms(animal.species).male} tag number (optional)</Label>
+              <Input id="repro-bull" value={form.bull_tag} disabled={busy} onChange={(e) => field('bull_tag', e.target.value)} /></div>
+          </>}
+          <div className="space-y-2"><Label htmlFor="repro-notes">Notes (optional)</Label>
+            <Textarea id="repro-notes" value={form.notes} disabled={busy} onChange={(e) => field('notes', e.target.value)} /></div>
+          <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setType(null)}>Back</Button>
+            <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save event'}</Button></DialogFooter>
+        </form>
+      )}
+    </DialogContent>
+  </Dialog>;
+}
+
+function ReproductiveEvents({ animal, canWrite, onChanged }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const labels = reproductiveLabels(animal.species);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(false);
+    listReproductiveEvents(animal.id).then(({ data }) => { if (active) setEvents(data.slice(0, 10)); })
+      .catch(() => { if (active) setError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [animal.id, refresh]);
+  const resultLabel = (event) => {
+    if (event.event_type === 'pd_test') return [event.pd_result && ({ pregnant: 'Pregnant', open: 'Open', recheck: 'Recheck' }[event.pd_result]),
+      event.pd_result === 'pregnant' && event.months_pregnant != null ? `${event.months_pregnant} months` : null].filter(Boolean).join(', ');
+    if (event.event_type === 'calving') return [event.calving_outcome === 'live' ? 'Live' : event.calving_outcome === 'stillbirth' ? 'Stillbirth' : null,
+      event.offspring_count != null ? `${event.offspring_count} offspring` : null].filter(Boolean).join(', ');
+    if (event.event_type === 'abortion') return event.abortion_stage ? `${event.abortion_stage} stage` : '';
+    return event.service_type === 'ai' ? 'AI' : event.service_type === 'natural' ? 'Natural' : '';
+  };
+  return <section className="mt-6 space-y-4">
+    {canWrite && <Button className="gap-2" onClick={() => setOpen(true)}><Plus className="h-4 w-4" />Record reproductive event</Button>}
+    <h2 className="font-heading text-lg font-semibold">Recent events</h2>
+    {loading ? <Skeleton className="h-24" /> : error ? <div role="alert" className="space-y-2">
+      <p className="text-sm text-red-600">Could not load reproductive events.</p>
+      <Button variant="outline" onClick={() => setRefresh((value) => value + 1)}>Retry</Button>
+    </div> : events.length === 0 ? <p className="text-sm text-muted-foreground">No reproductive events recorded yet.</p> : (
+      <ol className="relative border-l border-border ml-3 space-y-5">
+        {events.map((event) => {
+          const Icon = EVENT_ICONS[event.event_type] || ArrowRight;
+          const result = resultLabel(event);
+          return <li key={event.id} className="relative pl-6">
+            <span className="absolute -left-3 top-0 rounded-full bg-muted p-1"><Icon className="h-4 w-4" /></span>
+            <p className="text-sm text-muted-foreground">{fmt(event.event_date)}</p>
+            <p className="font-medium">{labels[event.event_type]}{result ? ` — ${result}` : ''}</p>
+          </li>;
+        })}
+      </ol>
+    )}
+    {open && <ReproductiveEventDialog animal={animal} onClose={() => setOpen(false)} onSaved={() => {
+      setRefresh((value) => value + 1); onChanged();
+    }} />}
+  </section>;
+}
+
 function ReproductionTab({ animal, history, loading, canWrite, onChanged }) {
   const [dialog, setDialog] = useState({ type: null });
   const terms = getTerms(animal.species);
@@ -1079,6 +1233,8 @@ function AnimalDetail() {
   const [photos, setPhotos] = useState([]);
   const [timeline, setTimeline] = useState([]);
   const [history, setHistory] = useState(null);
+  const [reproductiveSummary, setReproductiveSummary] = useState(null);
+  const summaryRequest = useRef(0);
   const [bcs, setBcs] = useState([]);
   const [notes, setNotes] = useState([]);
   const [locHistory, setLocHistory] = useState([]);
@@ -1089,6 +1245,24 @@ function AnimalDetail() {
   const [replaceDialog, setReplaceDialog] = useState(false);
 
   const markLoaded = useCallback((key) => setLoading((l) => ({ ...l, [key]: false })), []);
+
+  const loadReproductiveSummary = useCallback(async () => {
+    const request = ++summaryRequest.current;
+    try {
+      const { data } = await getReproductiveSummary(id);
+      if (request === summaryRequest.current) setReproductiveSummary({ animalId: id, data });
+    } catch {
+      if (request === summaryRequest.current) {
+        setReproductiveSummary(null);
+        toast.error('Failed to load reproductive summary');
+      }
+    }
+  }, [id]);
+
+  useEffect(() => {
+    loadReproductiveSummary();
+    return () => { summaryRequest.current += 1; };
+  }, [loadReproductiveSummary]);
 
   const loadPhotos = useCallback(
     () => getAnimalPhotos(id).then((r) => setPhotos(r.data)).catch(failToast('photos')).finally(() => markLoaded('photos')),
@@ -1135,7 +1309,7 @@ function AnimalDetail() {
   }, [id, markLoaded, loadPhotos, loadTimeline, loadHistory, loadBcs, loadNotes, loadLocHistory]);
 
   const afterNoteChange = () => { loadNotes(); loadTimeline(); };
-  const afterCycleChange = () => { loadHistory(); loadTimeline(); };
+  const afterCycleChange = () => { loadHistory(); loadTimeline(); loadReproductiveSummary(); };
   const afterBcsChange = () => { loadBcs(); loadTimeline(); };
 
   if (loading.animal) {
@@ -1165,10 +1339,11 @@ function AnimalDetail() {
             animalId={animal.id} photos={photos} loading={loading.photos}
             canWrite={isDataEntry} isAdmin={isAdmin} onChanged={loadPhotos}
           />
-          <IdentityCard animal={animal} canWrite={isDataEntry} isAdmin={isAdmin} onReplaceTag={() => setReplaceDialog(true)} />
+          <IdentityCard animal={animal} canWrite={isDataEntry} isAdmin={isAdmin} onReplaceTag={() => setReplaceDialog(true)}
+            reproductiveSummary={reproductiveSummary?.animalId === id ? reproductiveSummary.data : null} />
         </div>
         <div className="lg:col-span-2">
-          <Tabs defaultValue="timeline">
+          <Tabs defaultValue="timeline" onValueChange={(tab) => { if (tab === 'reproduction') loadReproductiveSummary(); }}>
             <TabsList>
               <TabsTrigger value="timeline">Timeline</TabsTrigger>
               <TabsTrigger value="reproduction">Reproduction</TabsTrigger>
@@ -1184,6 +1359,7 @@ function AnimalDetail() {
                 animal={animal} history={history} loading={loading.history}
                 canWrite={isDataEntry} onChanged={afterCycleChange}
               />
+              <ReproductiveEvents key={id} animal={animal} canWrite={isDataEntry} onChanged={loadReproductiveSummary} />
             </TabsContent>
             <TabsContent value="bcs" className="pt-4">
               <BCSTab animalId={animal.id} records={bcs} loading={loading.bcs} canWrite={isDataEntry} onChanged={afterBcsChange} />

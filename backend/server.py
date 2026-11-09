@@ -30,7 +30,7 @@ from models import (
     BullAssignment, ReproductiveCycle, BCSRecord, AnimalPhoto, AnimalNote,
     ReproductiveCycleStatus, CalvingOutcome, PDResult,
     AnimalLocationHistory,
-    AnimalIdentifier, AnimalIdentifierType,
+    AnimalIdentifier, AnimalIdentifierType, ReproductiveEvent, ReproductiveEventType,
 )
 from schemas import (
     UserLogin, UserCreate, UserUpdate, UserResponse, TokenResponse,
@@ -60,6 +60,7 @@ from schemas import (
     AnimalLocationHistoryResponse, ReconciliationRow, ReplaceTagRequest, ReplaceTagResponse,
     AnimalIdentifierCreate, AnimalIdentifierUpdate, AnimalIdentifierResponse, AnimalLookupResponse,
     AnimalIdentifierImportResult,
+    ReproductiveEventCreate, ReproductiveEventResponse, ReproductiveSummaryResponse,
 )
 from auth import (
     verify_password, get_password_hash, create_access_token,
@@ -134,8 +135,16 @@ async def startup():
         await conn.execute(text(
             "ALTER TABLE animals ADD COLUMN IF NOT EXISTS is_temp_tag BOOLEAN DEFAULT FALSE"
         ))
-        # create_all() only creates brand-new tables, so the Column(index=True) above never
-        # applies retroactively to the pre-existing animals table — done explicitly here.
+        # create_all() does not add columns to existing tables.
+        for definition in (
+            "reproductive_status VARCHAR(20) DEFAULT 'unknown'",
+            "last_calving_date DATE",
+            "last_pd_date DATE",
+            "months_pregnant INTEGER",
+            "services_without_conception INTEGER DEFAULT 0",
+        ):
+            await conn.execute(text(f"ALTER TABLE animals ADD COLUMN IF NOT EXISTS {definition}"))
+        # create_all() does not add indexes to existing tables.
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_animals_registry_tag_id ON animals (registry_tag_id)"
         ))
@@ -3309,6 +3318,7 @@ def _animal_response(animal: Animal) -> AnimalResponse:
         created_by_name=animal.creator.name if animal.creator else None,
         registry_tag_id=animal.registry_tag_id,
         is_temp_tag=bool(animal.is_temp_tag),
+        reproductive_status=animal.reproductive_status or "unknown",
     )
 
 @api_router.get("/templates/animals")
@@ -3620,6 +3630,28 @@ async def lookup_animal_by_id(
     animal, identifier = matches[0]
     return AnimalLookupResponse(animal=_animal_response(animal),
                                 matched_id=AnimalIdentifierResponse.model_validate(identifier))
+
+
+@api_router.get("/animals/repeat-breeders")
+async def list_repeat_breeders(
+    location_id: Optional[int] = None,
+    species: Optional[SpeciesType] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)),
+):
+    query = select(Animal, Location.name).join(Location, Animal.location_id == Location.id).where(
+        Animal.sex == AnimalSex.FEMALE,
+        Animal.services_without_conception >= REPEAT_BREEDER_THRESHOLD,
+    )
+    if location_id is not None:
+        query = query.where(Animal.location_id == location_id)
+    if species is not None:
+        query = query.where(Animal.species == species)
+    rows = (await db.execute(query.order_by(Animal.services_without_conception.desc(), Animal.id))).all()
+    return [{"tag_number": animal.tag_number, "species": animal.species, "location_name": name,
+             "services_without_conception": animal.services_without_conception,
+             "last_pd_date": animal.last_pd_date, "reproductive_status": animal.reproductive_status}
+            for animal, name in rows]
 
 
 @api_router.get("/animals/{animal_id}", response_model=AnimalResponse)
@@ -4495,6 +4527,8 @@ async def get_last_vaccinations(
 # app.include_router(api_router) below: routes added after that call are not served.
 _ANY_ROLE = (UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)
 GESTATION_DAYS = 283
+BREEDING_AGE_MONTHS = {"cattle": 24, "sheep": 18, "goats": 18}
+REPEAT_BREEDER_THRESHOLD = 3
 ALLOWED_PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
 
@@ -4757,6 +4791,9 @@ async def create_reproductive_cycle(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=409, detail="Cycle number conflict, please retry")
+    if cycle.actual_calving_date:
+        await _sync_cycle_calving_status(db, cycle)
+        await db.commit()
     return _cycle_response(await _load_cycle(db, cycle.id))
 
 
@@ -4793,6 +4830,9 @@ async def update_reproductive_cycle(
         await _recompute_cycle_fields(db, cycle)
         await _refresh_following_cycles(db, cycle.animal_id, cycle.cycle_number)
     await db.commit()
+    if changes.get("actual_calving_date"):
+        await _sync_cycle_calving_status(db, cycle)
+        await db.commit()
     return _cycle_response(await _load_cycle(db, cycle_id))
 
 
@@ -5197,7 +5237,8 @@ async def import_animal_identifiers(
 ):
     if not (file.filename or "").lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a CSV")
-    result = AnimalIdentifierImportResult(matched=0, identifiers_added=0, already_existed=0, unmatched_eids=[])
+    result = AnimalIdentifierImportResult(matched=0, identifiers_added=0, already_existed=0,
+                                         repro_fields_updated=0, unmatched_eids=[])
     tag_types = {"uhf ear tag": AnimalIdentifierType.UHF_TAG,
                  "ear tag": AnimalIdentifierType.VISUAL_TAG, "other": AnimalIdentifierType.OTHER}
     # Iterate the spooled upload without loading the full CSV into memory.
@@ -5211,7 +5252,7 @@ async def import_animal_identifiers(
             if not raw.driver_connection.in_transaction:
                 await connection.exec_driver_sql("BEGIN")
         reader = csv.DictReader(stream, strict=True)
-        required = {"eid", "eid_short", "reader_code", "species", "farm"}
+        required = {"eid", "eid_short", "reader_code"}
         required.update(f"tag_{i}{suffix}" for i in range(1, 5) for suffix in ("", "_type"))
         if not reader.fieldnames or not required.issubset(reader.fieldnames):
             raise HTTPException(status_code=400, detail="CSV is missing required baseline columns")
@@ -5230,15 +5271,15 @@ async def import_animal_identifiers(
             if any(len(value) > 100 for _, value in values):
                 raise HTTPException(status_code=400, detail=f"CSV row {reader.line_num}: identifier exceeds 100 characters")
             filters = []
-            if row["species"]:
+            if row.get("species"):
                 try:
                     filters.append(Animal.species == SpeciesType(row["species"].lower()))
                 except ValueError:
                     raise HTTPException(status_code=400, detail=f"CSV row {reader.line_num}: invalid species")
-            if row["farm"]:
+            if row.get("farm"):
                 filters.append(func.lower(Location.name) == row["farm"].lower())
             animal = None
-            for tag in (row["tag_1"], row["tag_2"]):
+            for tag in (row["tag_1"], row["tag_2"], row["tag_3"], row["tag_4"]):
                 if not tag:
                     continue
                 matches = (await db.execute(select(Animal).join(Location, Animal.location_id == Location.id)
@@ -5252,6 +5293,36 @@ async def import_animal_identifiers(
                 result.unmatched_eids.append(row["eid_short"])
                 continue
             result.matched += 1
+            # Optional reproductive baseline columns; identifier-only imports remain valid.
+            # A bad reproductive value is skipped; it never fails the row or the import.
+            calving = None
+            for parse in (date.fromisoformat, lambda s: datetime.strptime(s, "%d/%m/%Y").date()):
+                try:
+                    calving = parse(row.get("last_calving", ""))
+                    break
+                except ValueError:
+                    continue
+            pregnancy = row.get("pregnancy", "").lower()
+            repro = {}
+            if calving:
+                repro["last_calving_date"] = calving
+            if pregnancy == "yes":
+                repro["reproductive_status"] = "pregnant"
+                try:
+                    months = int(row.get("months_pregnant", ""))
+                except ValueError:
+                    months = None
+                repro["months_pregnant"] = months if months is not None and months >= 0 else None
+            elif pregnancy in ("no", "") and calving:
+                repro["reproductive_status"] = "open"
+                repro["months_pregnant"] = None
+            changed = False
+            for field, new_value in repro.items():
+                if getattr(animal, field) != new_value:
+                    setattr(animal, field, new_value)
+                    changed = True
+            if changed:
+                result.repro_fields_updated += 1
             for kind, value in values:
                 if not value or (kind == AnimalIdentifierType.VISUAL_TAG and value == animal.tag_number):
                     continue
@@ -5537,7 +5608,131 @@ async def get_reproduction_analytics(
     return ReproductionAnalyticsResponse(year=year, location_id=location_id, by_location=by_location, **overall)
 
 
-# Include router
+# ---------- Standalone reproductive events ----------
+async def _apply_reproductive_status(db, animal_id, event):
+    """Update the animal from a saved event; the caller owns the transaction."""
+    animal = await db.get(Animal, animal_id)
+    if animal is None:
+        return
+    if event.event_type == ReproductiveEventType.SERVICE:
+        animal.services_without_conception = (animal.services_without_conception or 0) + 1
+    elif event.event_type == ReproductiveEventType.PD_TEST:
+        animal.last_pd_date = event.event_date
+        if event.pd_result == PDResult.PREGNANT:
+            animal.reproductive_status = "pregnant"
+            animal.months_pregnant = event.months_pregnant
+            animal.services_without_conception = 0
+        else:
+            animal.reproductive_status = "open"
+            animal.months_pregnant = None
+    elif event.event_type == ReproductiveEventType.CALVING:
+        animal.reproductive_status = "open"
+        animal.last_calving_date = event.event_date
+        animal.months_pregnant = None
+        animal.services_without_conception = 0
+    elif event.event_type == ReproductiveEventType.ABORTION:
+        animal.reproductive_status = "open"
+        animal.months_pregnant = None
+    await db.flush()
+
+
+async def _sync_cycle_calving_status(db, cycle):
+    # Adapt the existing cycle without inserting a duplicate standalone event.
+    event_type = (ReproductiveEventType.ABORTION if cycle.calving_outcome == CalvingOutcome.ABORTION
+                  else ReproductiveEventType.CALVING)
+    await _apply_reproductive_status(db, cycle.animal_id, SimpleNamespace(
+        event_type=event_type, event_date=cycle.actual_calving_date,
+    ))
+
+
+async def _reproductive_animal(db, animal_id):
+    animal = (await db.execute(select(Animal).where(Animal.id == animal_id).with_for_update())).scalar_one_or_none()
+    if animal is None:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    return animal
+
+
+@api_router.post("/animals/{animal_id}/reproductive-events", response_model=ReproductiveEventResponse)
+async def create_reproductive_event(
+    animal_id: int,
+    data: ReproductiveEventCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    # Serialize saves for one animal so concurrent services do not lose increments.
+    await _reproductive_animal(db, animal_id)
+    if data.event_type == ReproductiveEventType.SERVICE and data.bull_animal_id is not None:
+        if await db.get(Animal, data.bull_animal_id) is None:
+            raise HTTPException(status_code=404, detail="Bull animal not found")
+    values = data.model_dump()
+    if data.pd_result is not None:
+        values["pd_result"] = PDResult.REPEAT if data.pd_result == "recheck" else PDResult(data.pd_result)
+    event = ReproductiveEvent(**values, animal_id=animal_id, recorded_by=current_user.id)
+    db.add(event)
+    await db.flush()
+    await _apply_reproductive_status(db, animal_id, event)
+    await db.commit()
+    await db.refresh(event)
+    return ReproductiveEventResponse.model_validate(event)
+
+
+@api_router.get("/animals/{animal_id}/reproductive-events", response_model=List[ReproductiveEventResponse])
+async def list_reproductive_events(
+    animal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    if await db.get(Animal, animal_id) is None:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    events = (await db.execute(select(ReproductiveEvent).where(ReproductiveEvent.animal_id == animal_id)
+                              .order_by(ReproductiveEvent.event_date.desc(), ReproductiveEvent.id.desc()))).scalars().all()
+    return [ReproductiveEventResponse.model_validate(event) for event in events]
+
+
+@api_router.get("/animals/{animal_id}/reproductive-summary", response_model=ReproductiveSummaryResponse)
+async def reproductive_summary(
+    animal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    animal = await db.get(Animal, animal_id)
+    if animal is None:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    events = (await db.execute(select(ReproductiveEvent).where(ReproductiveEvent.animal_id == animal_id)
+                              .order_by(ReproductiveEvent.event_date.desc(), ReproductiveEvent.id.desc())
+                              .limit(5))).scalars().all()
+    services = animal.services_without_conception or 0
+    return ReproductiveSummaryResponse(
+        status=animal.reproductive_status or "unknown", last_calving_date=animal.last_calving_date,
+        last_pd_date=animal.last_pd_date, months_pregnant=animal.months_pregnant,
+        services_without_conception=services, is_repeat_breeder=services >= REPEAT_BREEDER_THRESHOLD,
+        events=[ReproductiveEventResponse.model_validate(event) for event in events],
+    )
+
+
+@api_router.post("/admin/tasks/sync-reproductive-status")
+async def sync_reproductive_status(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    animals = (await db.execute(select(Animal).where(
+        Animal.sex == AnimalSex.FEMALE, Animal.reproductive_status == "unknown",
+        Animal.birth_date.isnot(None),
+    ).with_for_update())).scalars().all()
+    today = date.today()
+    updated = 0
+    for animal in animals:
+        born = animal.birth_date
+        age_months = (today.year - born.year) * 12 + today.month - born.month - (today.day < born.day)
+        species_key = "goats" if animal.species == SpeciesType.GOAT else animal.species.value
+        if age_months >= BREEDING_AGE_MONTHS[species_key]:
+            animal.reproductive_status = "open"
+            updated += 1
+    await db.commit()
+    return {"updated": updated}
+
+
+# Include router after all route declarations.
 app.include_router(api_router)
 
 @app.on_event("shutdown")

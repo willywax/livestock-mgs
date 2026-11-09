@@ -58,7 +58,7 @@ function IdentifierImportCard() {
         <Button onClick={importFile} disabled={busy || !file}>{busy ? 'Importing…' : 'Import'}</Button>
         {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
         {result && <div role="status" className="rounded-lg border p-4 space-y-3">
-          <p>Matched {result.matched} animals, added {result.identifiers_added} identifiers, {result.already_existed} already existed</p>
+          <p>Matched {result.matched} animals · Added {result.identifiers_added} identifiers · {result.already_existed} already existed · Reproductive fields updated for {result.repro_fields_updated} animals</p>
           {result.unmatched_eids.length > 0 && <details>
             <summary className="cursor-pointer">{result.unmatched_eids.length} animals not found in register</summary>
             <ul className="mt-2 max-h-60 overflow-auto list-disc pl-5 font-mono text-sm">{result.unmatched_eids.map((eid, index) => <li key={index}>{eid || '(missing EID short)'}</li>)}</ul>

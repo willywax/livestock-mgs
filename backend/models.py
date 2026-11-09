@@ -229,6 +229,11 @@ class Animal(Base):
     notes = Column(Text, nullable=True)
     registry_tag_id = Column(String(100), nullable=True, index=True)
     is_temp_tag = Column(Boolean, default=False, nullable=False, server_default='false')
+    reproductive_status = Column(String(20), default="unknown", server_default="unknown", nullable=True)
+    last_calving_date = Column(Date, nullable=True)
+    last_pd_date = Column(Date, nullable=True)
+    months_pregnant = Column(Integer, nullable=True)
+    services_without_conception = Column(Integer, default=0, server_default="0", nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -498,3 +503,30 @@ class AnimalIdentifier(Base):
     recorded_date = Column(Date, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReproductiveEventType(str, enum.Enum):
+    PD_TEST = "pd_test"
+    CALVING = "calving"
+    ABORTION = "abortion"
+    SERVICE = "service"
+
+
+class ReproductiveEvent(Base):
+    __tablename__ = "reproductive_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
+    event_type = Column(SQLEnum(ReproductiveEventType), nullable=False)
+    event_date = Column(Date, nullable=False)
+    pd_result = Column(SQLEnum(PDResult), nullable=True)
+    months_pregnant = Column(Integer, nullable=True)
+    calving_outcome = Column(String(20), nullable=True)
+    offspring_count = Column(Integer, nullable=True)
+    abortion_stage = Column(SQLEnum(AbortionStage), nullable=True)
+    service_type = Column(SQLEnum(ServiceType), nullable=True)
+    bull_animal_id = Column(Integer, ForeignKey("animals.id"), nullable=True)
+    vet = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+    recorded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    recorded_at = Column(DateTime(timezone=True), server_default=func.now())

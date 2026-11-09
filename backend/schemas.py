@@ -1,11 +1,11 @@
 from pydantic import BaseModel, Field, ConfigDict, field_validator
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime, date
 from models import (
     UserRole, EventType, SpeciesType, AbortionStage, AnimalSex, AnimalAcquisitionType, AnimalStatus,
     HealthEventType, CategoryScope, VaccineType as VaccineTypeModel,
     ServiceType, PDResult, ReproductiveCycleStatus, CalvingOutcome, NoteType,
-    AnimalIdentifierType,
+    AnimalIdentifierType, ReproductiveEventType,
 )
 
 # Auth schemas
@@ -499,6 +499,7 @@ class AnimalResponse(BaseModel):
     created_by_name: Optional[str] = None
     registry_tag_id: Optional[str] = None
     is_temp_tag: bool = False
+    reproductive_status: str = "unknown"
 
 class BulkImportResult(BaseModel):
     created: int
@@ -914,4 +915,42 @@ class AnimalIdentifierImportResult(BaseModel):
     matched: int
     identifiers_added: int
     already_existed: int
+    repro_fields_updated: int = 0
     unmatched_eids: List[str]
+
+
+class ReproductiveEventCreate(BaseModel):
+    event_type: ReproductiveEventType
+    event_date: date
+    pd_result: Optional[Literal["pregnant", "open", "recheck"]] = None
+    months_pregnant: Optional[int] = Field(default=None, ge=0)
+    calving_outcome: Optional[Literal["live", "stillbirth"]] = None
+    offspring_count: Optional[int] = Field(default=None, ge=0)
+    abortion_stage: Optional[AbortionStage] = None
+    service_type: Optional[ServiceType] = None
+    bull_animal_id: Optional[int] = None
+    vet: Optional[str] = Field(default=None, max_length=100)
+    notes: Optional[str] = None
+
+
+class ReproductiveEventResponse(ReproductiveEventCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    animal_id: int
+    recorded_by: Optional[int]
+    recorded_at: datetime
+
+    @field_validator("pd_result", mode="before")
+    @classmethod
+    def expose_recheck(cls, value):
+        return "recheck" if value == PDResult.REPEAT else value
+
+
+class ReproductiveSummaryResponse(BaseModel):
+    status: str
+    last_calving_date: Optional[date]
+    last_pd_date: Optional[date]
+    months_pregnant: Optional[int]
+    services_without_conception: int
+    is_repeat_breeder: bool
+    events: List[ReproductiveEventResponse]

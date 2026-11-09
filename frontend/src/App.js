@@ -20,6 +20,7 @@ import Animals from "./pages/Animals";
 import FarmHealth from "./pages/FarmHealth";
 import Reproduction from "./pages/Reproduction";
 import AnimalDetail from "./pages/AnimalDetail";
+import RepeatBreeders from "./pages/RepeatBreeders";
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -111,6 +112,11 @@ function AppRoutes() {
             <Animals />
           </ProtectedRoute>
         }
+      />
+
+      <Route
+        path="/animals/repeat-breeders"
+        element={<ProtectedRoute><RepeatBreeders /></ProtectedRoute>}
       />
 
       <Route

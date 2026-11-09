@@ -182,7 +182,8 @@ async def test_import_mappings_repeat_and_inactive(client, db_session):
                             "tag_3_type": "Ear tag", "tag_3": "SECOND", "tag_4_type": "Other", "tag_4": "MARK"})
     response = await import_csv(client, content)
     assert response.status_code == 200, response.text
-    assert response.json() == {"matched": 1, "identifiers_added": 5, "already_existed": 0, "unmatched_eids": []}
+    assert response.json() == {"matched": 1, "identifiers_added": 5, "already_existed": 0,
+                               "repro_fields_updated": 0, "unmatched_eids": []}
     records = (await db_session.execute(select(AnimalIdentifier))).scalars().all()
     assert {(r.id_type.value, r.id_value) for r in records} == {
         ("eid", "001234567890123"), ("reader_code", "E144ABCD"), ("uhf_tag", "009"),
@@ -193,7 +194,8 @@ async def test_import_mappings_repeat_and_inactive(client, db_session):
     records[0].is_active = False
     await db_session.commit()
     response = await import_csv(client, content)
-    assert response.json() == {"matched": 1, "identifiers_added": 0, "already_existed": 5, "unmatched_eids": []}
+    assert response.json() == {"matched": 1, "identifiers_added": 0, "already_existed": 5,
+                               "repro_fields_updated": 0, "unmatched_eids": []}
     await db_session.refresh(records[0])
     assert (await db_session.get(AnimalIdentifier, record_id)).is_active is False
     assert (await db_session.get(Animal, animal_id)).tag_number == "008"
@@ -217,7 +219,7 @@ async def test_import_fallback_scoping_and_unmatched(client, db_session):
     response = await import_csv(client, content)
     assert response.status_code == 200, response.text
     assert response.json() == {"matched": 2, "identifiers_added": 2, "already_existed": 0,
-                               "unmatched_eids": ["003", "004", "005"]}
+                               "repro_fields_updated": 0, "unmatched_eids": ["003", "004", "005"]}
     assert (await lookup(client, "E1")).json()["animal"]["id"] == first
     assert (await lookup(client, "E2")).json()["animal"]["id"] == second
     assert (await db_session.execute(select(func.count(Animal.id)))).scalar_one() == 2

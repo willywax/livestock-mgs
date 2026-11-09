@@ -184,6 +184,7 @@ function Animals() {
   const [loading, setLoading] = useState(true);
 
   const [filterSpecies, setFilterSpecies] = useState('all');
+  const [filterReproductive, setFilterReproductive] = useState('all');
   const [filterLocation, setFilterLocation] = useState('all');
   const [filterStatus, setFilterStatus] = useState('active');
   const [filterTempOnly, setFilterTempOnly] = useState(false);
@@ -310,6 +311,7 @@ function Animals() {
   }
 
   const filteredAnimals = animals.filter(function (a) {
+    if (filterReproductive !== 'all' && (a.reproductive_status || 'unknown') !== filterReproductive) return false;
     if (filterSpecies !== 'all' && a.species !== filterSpecies) return false;
     if (filterLocation !== 'all' && a.location_id !== parseInt(filterLocation)) return false;
     if (filterStatus !== 'all' && a.status !== filterStatus) return false;
@@ -524,6 +526,26 @@ function Animals() {
             <SelectItem value="cattle">Cattle</SelectItem>
             <SelectItem value="sheep">Sheep</SelectItem>
             <SelectItem value="goat">Goat</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={filterReproductive} onValueChange={(value) => {
+          if (value === 'repeat') {
+            const params = new URLSearchParams();
+            if (filterSpecies !== 'all') params.set('species', filterSpecies);
+            if (filterLocation !== 'all') params.set('location_id', filterLocation);
+            navigate(`/animals/repeat-breeders${params.size ? `?${params}` : ''}`);
+          } else setFilterReproductive(value);
+        }}>
+          <SelectTrigger className="w-56" aria-label="Reproductive status">
+            <span className="mr-1 text-muted-foreground">Reproduction:</span><SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="open">Open</SelectItem>
+            <SelectItem value="pregnant">Pregnant</SelectItem>
+            <SelectItem value="unknown">Unknown</SelectItem>
+            <SelectItem value="repeat">Repeat breeders</SelectItem>
           </SelectContent>
         </Select>
 

@@ -203,3 +203,10 @@ export const importAnimalIdentifiers = (file) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 };
+
+// Standalone reproductive events
+export const getReproductiveSummary = (animalId) => api.get(`/animals/${animalId}/reproductive-summary`);
+export const listReproductiveEvents = (animalId) => api.get(`/animals/${animalId}/reproductive-events`);
+export const createReproductiveEvent = (animalId, data) => api.post(`/animals/${animalId}/reproductive-events`, data);
+export const listRepeatBreeders = (params) => api.get('/animals/repeat-breeders', { params });
+export const syncReproductiveStatus = () => api.post('/admin/tasks/sync-reproductive-status');
