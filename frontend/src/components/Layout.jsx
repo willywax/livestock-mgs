@@ -21,6 +21,7 @@ import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 
 const navItems = [
+  { path: '/reconciliation', icon: Scales, label: 'Reconciliation', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/', icon: House, label: 'Dashboard', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/locations', icon: MapPin, label: 'Locations', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/animals', icon: Tag, label: 'Animals', roles: ['admin', 'data_entry', 'viewer'] },
@@ -29,6 +30,7 @@ const navItems = [
   { path: '/daily-logs', icon: CalendarBlank, label: 'Daily Logs', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/opening-balances', icon: Scales, label: 'Opening Balances', roles: ['admin'] },
   { path: '/reports', icon: ChartBar, label: 'Reports', roles: ['admin', 'data_entry', 'viewer'] },
+  { path: '/reports/mortality', icon: ChartBar, label: 'Mortality', roles: ['admin', 'data_entry', 'viewer'] },
   { path: '/settings', icon: Gear, label: 'Settings', roles: ['admin'] },
   { path: '/admin/users', icon: Users, label: 'Users', roles: ['admin'] },
 ];

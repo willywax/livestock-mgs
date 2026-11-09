@@ -5,8 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Calendar } from '../components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import DateRangePicker, { lastDaysRange } from '../components/DateRangePicker';
 import { Skeleton } from '../components/ui/skeleton';
 import { CalendarBlank, Plus, Lock, MapPin, Funnel } from '@phosphor-icons/react';
 import { toast } from 'sonner';
@@ -20,8 +19,8 @@ const DailyLogs = () => {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     location_id: '',
-    start_date: null,
-    end_date: null
+    start_date: lastDaysRange(30).from,
+    end_date: lastDaysRange(30).to
   });
   const { isDataEntry } = useAuth();
 
@@ -101,37 +100,11 @@ const DailyLogs = () => {
               </SelectContent>
             </Select>
 
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="gap-2" data-testid="date-filter">
-                  <CalendarBlank className="h-4 w-4" />
-                  {filters.start_date ? format(filters.start_date, 'MMM d') : 'Start Date'}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={filters.start_date}
-                  onSelect={(date) => setFilters({ ...filters, start_date: date })}
-                />
-              </PopoverContent>
-            </Popover>
-
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="gap-2">
-                  <CalendarBlank className="h-4 w-4" />
-                  {filters.end_date ? format(filters.end_date, 'MMM d') : 'End Date'}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={filters.end_date}
-                  onSelect={(date) => setFilters({ ...filters, end_date: date })}
-                />
-              </PopoverContent>
-            </Popover>
+            <DateRangePicker
+              clearable
+              value={filters.start_date && filters.end_date ? { from: filters.start_date, to: filters.end_date } : null}
+              onChange={(range) => setFilters({ ...filters, start_date: range ? range.from : null, end_date: range ? range.to : null })}
+            />
 
             {(filters.location_id || filters.start_date || filters.end_date) && (
               <Button 

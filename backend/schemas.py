@@ -1,11 +1,12 @@
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List, Literal
 from datetime import datetime, date
+from decimal import Decimal
 from models import (
     UserRole, EventType, SpeciesType, AbortionStage, AnimalSex, AnimalAcquisitionType, AnimalStatus,
     HealthEventType, CategoryScope, VaccineType as VaccineTypeModel,
     ServiceType, PDResult, ReproductiveCycleStatus, CalvingOutcome, NoteType,
-    AnimalIdentifierType, ReproductiveEventType,
+    AnimalIdentifierType, ReproductiveEventType, ReconciliationInputType, CustomerType,
 )
 
 # Auth schemas
@@ -116,6 +117,7 @@ class EventCreate(BaseModel):
     # Common field for all events
     animal_tags: Optional[str] = None
     # Death-specific
+    cause_of_death_id: Optional[int] = None
     cause_of_death: Optional[str] = None
     disease_id: Optional[int] = None  # If cause is "disease"
     days_sick: Optional[int] = None
@@ -142,6 +144,7 @@ class EventUpdate(BaseModel):
     to_category_id: Optional[int] = None
     notes: Optional[str] = None
     animal_tags: Optional[str] = None
+    cause_of_death_id: Optional[int] = None
     cause_of_death: Optional[str] = None
     disease_id: Optional[int] = None
     days_sick: Optional[int] = None
@@ -178,6 +181,7 @@ class EventResponse(BaseModel):
     to_location_name: Optional[str] = None
     # Additional fields
     animal_tags: Optional[str] = None
+    cause_of_death_id: Optional[int] = None
     cause_of_death: Optional[str] = None
     disease_id: Optional[int] = None
     disease_name: Optional[str] = None
@@ -954,3 +958,260 @@ class ReproductiveSummaryResponse(BaseModel):
     services_without_conception: int
     is_repeat_breeder: bool
     events: List[ReproductiveEventResponse]
+
+
+class ReconciliationEntryInput(BaseModel):
+    raw_value: str = Field(min_length=1, max_length=100)
+    id_type: AnimalIdentifierType
+
+    @field_validator("raw_value")
+    @classmethod
+    def nonblank_value(cls, value):
+        if not value.strip():
+            raise ValueError("Tag value cannot be blank")
+        return value
+
+
+class ReconciliationSessionCreate(BaseModel):
+    location_id: int
+    session_date: date
+    input_type: ReconciliationInputType
+    notes: Optional[str] = None
+    entries: List[ReconciliationEntryInput]
+
+    @field_validator("entries")
+    @classmethod
+    def valid_entry_types(cls, entries, info):
+        allowed = {
+            ReconciliationInputType.RFID: {AnimalIdentifierType.EID, AnimalIdentifierType.READER_CODE},
+            ReconciliationInputType.VISUAL: {AnimalIdentifierType.VISUAL_TAG},
+            ReconciliationInputType.MIXED: {
+                AnimalIdentifierType.EID, AnimalIdentifierType.READER_CODE, AnimalIdentifierType.VISUAL_TAG,
+            },
+        }.get(info.data.get("input_type"), set())
+        if any(entry.id_type not in allowed for entry in entries):
+            raise ValueError("Identifier type is not permitted for this session input type")
+        return entries
+
+
+class ReconciliationMatchedAnimal(BaseModel):
+    animal_id: int
+    tag_number: str
+    species: SpeciesType
+    matched_via: Literal["identifier", "tag_number"]
+
+
+class ReconciliationUnmatchedScan(BaseModel):
+    raw_value: str
+    id_type: AnimalIdentifierType
+
+
+class ReconciliationMissingAnimal(BaseModel):
+    animal_id: int
+    tag_number: str
+    species: SpeciesType
+    category: str
+
+
+class ReconciliationResultResponse(BaseModel):
+    session_id: int
+    location_name: str
+    session_date: date
+    input_type: ReconciliationInputType
+    total_scanned: int
+    matched: List[ReconciliationMatchedAnimal]
+    unmatched_scan: List[ReconciliationUnmatchedScan]
+    in_system_not_seen: List[ReconciliationMissingAnimal]
+    matched_count: int
+    unmatched_scan_count: int
+    in_system_not_seen_count: int
+    coverage_pct: float
+
+
+class ReconciliationSessionSummary(BaseModel):
+    id: int
+    location_name: str
+    session_date: date
+    input_type: ReconciliationInputType
+    total_scanned: int
+    matched_count: int
+    unmatched_scan_count: int
+    in_system_not_seen_count: int
+    coverage_pct: float
+    created_at: datetime
+
+
+class PDTestImportResult(BaseModel):
+    matched: int
+    events_created: int
+    not_found: List[str]
+    skipped: List[str]
+    total_rows: int
+
+
+class CustomerCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    location: Optional[str] = Field(default=None, max_length=200)
+    customer_type: CustomerType = CustomerType.INDIVIDUAL
+    notes: Optional[str] = None
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value):
+        if not value.strip():
+            raise ValueError("Customer name cannot be blank")
+        return value.strip()
+
+
+class CustomerUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    location: Optional[str] = Field(default=None, max_length=200)
+    customer_type: Optional[CustomerType] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("name", "customer_type", "is_active")
+    @classmethod
+    def nonnull_fields(cls, value, info):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError("This field cannot be null or blank")
+        return value.strip() if info.field_name == "name" else value
+
+
+class CustomerResponse(CustomerCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    created_at: datetime
+
+
+class SaleDetailCreate(BaseModel):
+    customer_id: Optional[int] = None
+    price_per_head: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    total_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    notes: Optional[str] = None
+
+
+class SaleDetailResponse(SaleDetailCreate):
+    id: int
+    event_id: int
+    customer_name: Optional[str]
+    created_at: datetime
+
+
+class SalesLineItem(BaseModel):
+    date: date
+    farm: str
+    species: SpeciesType
+    category: Optional[str]
+    qty: int
+    price_per_head: Optional[Decimal]
+    total_price: Optional[Decimal]
+    customer_name: Optional[str]
+    event_id: int
+
+
+class SalesSummary(BaseModel):
+    total_revenue: Decimal
+    total_head: int
+    avg_price_per_head: Decimal
+    period: dict[str, date]
+
+
+class SalesPeriodBucket(BaseModel):
+    month: str
+    revenue: Decimal
+    head_count: int
+
+
+class SalesReportResponse(BaseModel):
+    summary: SalesSummary
+    by_period: List[SalesPeriodBucket]
+    line_items: List[SalesLineItem]
+
+
+class CustomerDetailResponse(CustomerResponse):
+    purchases: List[SalesLineItem]
+
+
+class DeathCauseCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: Optional[str] = None
+    sort_order: int = 0
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value):
+        if not value.strip():
+            raise ValueError("Name cannot be blank")
+        return value.strip()
+
+
+class DeathCauseUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    description: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("name", "sort_order", "is_active")
+    @classmethod
+    def validate_nonnull(cls, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError("Field cannot be null or blank")
+        return value.strip() if isinstance(value, str) else value
+
+
+class DeathCauseResponse(DeathCauseCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    is_active: bool
+    created_at: datetime
+
+
+class MortalityThresholdUpdate(BaseModel):
+    species: SpeciesType
+    threshold: Decimal = Field(ge=0, max_digits=5, decimal_places=2)
+
+
+class MortalityThresholdResponse(MortalityThresholdUpdate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    updated_by: Optional[int]
+    updated_at: datetime
+
+
+class MortalityBySpecies(BaseModel):
+    species: SpeciesType
+    deaths: int
+    avg_stock: float
+    mortality_rate_pct: Optional[float]
+    threshold_pct: Optional[float]
+    is_alert: bool
+
+
+class MortalityByFarm(MortalityBySpecies):
+    farm: str
+    location_id: int
+
+
+class MortalityByCause(BaseModel):
+    cause_name: str
+    count: int
+    pct_of_total: float
+
+
+class MortalityByMonth(BaseModel):
+    month: str
+    deaths: int
+    by_species: dict[str, int]
+
+
+class MortalityReportResponse(BaseModel):
+    summary: dict
+    by_species: List[MortalityBySpecies]
+    by_farm: List[MortalityByFarm]
+    by_cause: List[MortalityByCause]
+    by_month: List[MortalityByMonth]
+    flagged: List[MortalityByFarm]

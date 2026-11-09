@@ -14,7 +14,7 @@ import logging
 import csv
 import io
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
 from pathlib import Path
 from typing import List, Optional
@@ -31,6 +31,7 @@ from models import (
     ReproductiveCycleStatus, CalvingOutcome, PDResult,
     AnimalLocationHistory,
     AnimalIdentifier, AnimalIdentifierType, ReproductiveEvent, ReproductiveEventType,
+    ReconciliationSession, ReconciliationEntry, Customer, SaleDetail, DeathCause, MortalityThreshold,
 )
 from schemas import (
     UserLogin, UserCreate, UserUpdate, UserResponse, TokenResponse,
@@ -61,6 +62,12 @@ from schemas import (
     AnimalIdentifierCreate, AnimalIdentifierUpdate, AnimalIdentifierResponse, AnimalLookupResponse,
     AnimalIdentifierImportResult,
     ReproductiveEventCreate, ReproductiveEventResponse, ReproductiveSummaryResponse,
+    ReconciliationSessionCreate, ReconciliationResultResponse, ReconciliationSessionSummary,
+    PDTestImportResult,
+    DeathCauseCreate, DeathCauseUpdate, DeathCauseResponse,
+    MortalityThresholdUpdate, MortalityThresholdResponse, MortalityReportResponse,
+    CustomerCreate, CustomerUpdate, CustomerResponse, CustomerDetailResponse,
+    SaleDetailCreate, SaleDetailResponse, SalesLineItem, SalesReportResponse,
 )
 from auth import (
     verify_password, get_password_hash, create_access_token,
@@ -112,6 +119,11 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text(
+            "ALTER TABLE events ADD COLUMN IF NOT EXISTS "
+            "cause_of_death_id INTEGER REFERENCES death_causes(id)"
+        ))
+        await _seed_death_causes(conn)
         # Add vaccine_type_id to farm_health_events if not already present.
         # IF NOT EXISTS makes this idempotent on every restart.
         await conn.execute(text(
@@ -936,6 +948,7 @@ async def get_daily_log(
             from_location_name=from_loc_name,
             to_location_name=to_loc_name,
             animal_tags=e.animal_tags,
+            cause_of_death_id=e.cause_of_death_id,
             cause_of_death=e.cause_of_death,
             disease_id=e.disease_id,
             disease_name=disease_name,
@@ -992,6 +1005,9 @@ async def create_daily_log(
     db.add(daily_log)
     await db.flush()
 
+    # Validate all structured causes before any event writes or stock changes.
+    for event_data in data.events:
+        await _validate_death_cause(db, event_data.event_type, event_data.cause_of_death_id)
     # Process events
     created_events = []
     for event_data in data.events:
@@ -1018,6 +1034,7 @@ async def create_daily_log(
             is_stock_event=event_data.is_stock_event,
             # New fields
             animal_tags=event_data.animal_tags,
+            cause_of_death_id=event_data.cause_of_death_id,
             cause_of_death=event_data.cause_of_death,
             disease_id=event_data.disease_id,
             days_sick=event_data.days_sick,
@@ -1066,6 +1083,7 @@ async def create_daily_log(
             is_stock_event=event.is_stock_event,
             created_at=event.created_at,
             animal_tags=event.animal_tags,
+            cause_of_death_id=event.cause_of_death_id,
             cause_of_death=event.cause_of_death,
             disease_id=event.disease_id,
             days_sick=event.days_sick,
@@ -1426,6 +1444,8 @@ async def add_event_to_daily_log(
     if not log:
         raise HTTPException(status_code=404, detail="Daily log not found")
 
+    await _validate_death_cause(db, event_data.event_type, event_data.cause_of_death_id)
+
     # Validate stock availability for stock-reducing events
     if event_data.is_stock_event and event_data.event_type not in [EventType.BIRTH, EventType.GIFT_IN, EventType.BOUGHT]:
         can_proceed, message = await check_stock_availability(
@@ -1447,6 +1467,7 @@ async def add_event_to_daily_log(
         notes=event_data.notes,
         is_stock_event=event_data.is_stock_event,
         animal_tags=event_data.animal_tags,
+        cause_of_death_id=event_data.cause_of_death_id,
         cause_of_death=event_data.cause_of_death,
         disease_id=event_data.disease_id,
         days_sick=event_data.days_sick,
@@ -1490,6 +1511,7 @@ async def add_event_to_daily_log(
         is_stock_event=event.is_stock_event,
         created_at=event.created_at,
         animal_tags=event.animal_tags,
+        cause_of_death_id=event.cause_of_death_id,
         cause_of_death=event.cause_of_death,
         disease_id=event.disease_id,
         days_sick=event.days_sick,
@@ -1618,6 +1640,10 @@ async def update_event(
 
     location_id = event.daily_log.location_id
 
+    effective_type = data.event_type or event.event_type
+    if "cause_of_death_id" in data.model_fields_set:
+        await _validate_death_cause(db, effective_type, data.cause_of_death_id,
+                                    existing_id=event.cause_of_death_id)
     # ADDED: Type-specific field guard — reject fields that don't apply to event_type
     _type_fields: dict = {
         EventType.DEATH:    {"cause_of_death", "disease_id", "days_sick", "attending_vet"},
@@ -1658,6 +1684,10 @@ async def update_event(
         await reverse_event_stock(db, location_id, old_event_data)
 
     # Update event fields
+    if "cause_of_death_id" in data.model_fields_set:
+        event.cause_of_death_id = data.cause_of_death_id
+    if effective_type != EventType.DEATH:
+        event.cause_of_death_id = None
     if data.event_type is not None:
         event.event_type = data.event_type
     if data.species is not None:
@@ -1741,6 +1771,7 @@ async def update_event(
         is_stock_event=event.is_stock_event,
         created_at=event.created_at,
         animal_tags=event.animal_tags,
+        cause_of_death_id=event.cause_of_death_id,
         cause_of_death=event.cause_of_death,
         days_sick=event.days_sick,
         attending_vet=event.attending_vet,
@@ -1866,11 +1897,16 @@ async def recompute_stock_levels_endpoint(
 async def get_dashboard(
     location_id: Optional[int] = None,
     period_days: int = Query(30, ge=1, le=3650),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
     today = date.today()
-    period_start = today - timedelta(days=period_days)
+    if date_from and date_to and date_to < date_from:
+        raise HTTPException(status_code=400, detail="date_to must be on or after date_from")
+    # Explicit dates override period_days; with neither, behaviour is unchanged (last period_days, open-ended).
+    period_start = date_from or ((date_to or today) - timedelta(days=period_days))
     
     # Get location info if filtered
     selected_location = None
@@ -2012,6 +2048,8 @@ async def get_dashboard(
     
     # Get events from selected period
     perf_query = select(Event).join(DailyLog).where(DailyLog.log_date >= period_start)
+    if date_to:
+        perf_query = perf_query.where(DailyLog.log_date <= date_to)
     if location_id:
         perf_query = perf_query.where(DailyLog.location_id == location_id)
     result = await db.execute(perf_query)
@@ -5502,15 +5540,14 @@ def _ratio(numerator: int, denominator: int) -> Optional[float]:
     return round(numerator / denominator, 4) if denominator else None
 
 
-async def _repro_metrics(db: AsyncSession, year: int, location_id: Optional[int]) -> dict:
-    """Reproduction metrics for one year (and optionally one location, by the animal's current location).
+async def _repro_metrics(db: AsyncSession, start: date, end: date, location_id: Optional[int]) -> dict:
+    """Reproduction metrics for a date range (and optionally one location, by the animal's current location).
 
     koo_count: latest OpeningBalance per (location, species, category) for Koo categories with
-    period_start <= 1 Jan of the year, summed over species; falls back to current StockLevel when
+    period_start <= the range start, summed over species; falls back to current StockLevel when
     there is no opening balance. Calvings/PD checks are bucketed by their own dates; open/pregnant
     counts are a current snapshot of active animals.
     """
-    start, end = date(year, 1, 1), date(year, 12, 31)
     koo_ids = list((await db.execute(select(Category.id).where(Category.name_sw == "Koo"))).scalars().all())
 
     koo_count = 0
@@ -5538,15 +5575,15 @@ async def _repro_metrics(db: AsyncSession, year: int, location_id: Optional[int]
         cyc_query = cyc_query.where(Animal.location_id == location_id)
     cycles = (await db.execute(cyc_query)).scalars().all()
 
-    def in_year(d: Optional[date]) -> bool:
+    def in_range(d: Optional[date]) -> bool:
         return d is not None and start <= d <= end
 
-    calved = [c for c in cycles if in_year(c.actual_calving_date)]
+    calved = [c for c in cycles if in_range(c.actual_calving_date)]
     live = sum(1 for c in calved if c.calving_outcome in (CalvingOutcome.LIVE_CALF, CalvingOutcome.ASSISTED_LIVE))
-    pd_done = [c for c in cycles if c.pd_result is not None and in_year(c.pd_check_date)]
+    pd_done = [c for c in cycles if c.pd_result is not None and in_range(c.pd_check_date)]
     pd_pregnant = sum(1 for c in pd_done if c.pd_result == PDResult.PREGNANT)
     confirmed = [c for c in cycles if c.pd_result == PDResult.PREGNANT
-                 and in_year(c.actual_calving_date or c.pd_check_date or c.service_date)]
+                 and in_range(c.actual_calving_date or c.pd_check_date or c.service_date)]
     aborted = sum(1 for c in confirmed
                   if c.status == ReproductiveCycleStatus.ABORTED or c.calving_outcome == CalvingOutcome.ABORTION)
     intervals = [c.calving_interval_days for c in calved if c.calving_interval_days is not None]
@@ -5593,18 +5630,30 @@ async def _repro_metrics(db: AsyncSession, year: int, location_id: Optional[int]
 async def get_reproduction_analytics(
     location_id: Optional[int] = None,
     year: Optional[int] = Query(None, ge=2000, le=2100),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(*_ANY_ROLE)),
 ):
-    year = year or date.today().year
-    overall = await _repro_metrics(db, year, location_id)
+    # Explicit dates override year; with neither, the current calendar year is used (unchanged).
+    if date_from or date_to:
+        if not (date_from and date_to):
+            raise HTTPException(status_code=400, detail="date_from and date_to must be provided together")
+        if date_to < date_from:
+            raise HTTPException(status_code=400, detail="date_to must be on or after date_from")
+        start, end = date_from, date_to
+        year = date_to.year
+    else:
+        year = year or date.today().year
+        start, end = date(year, 1, 1), date(year, 12, 31)
+    overall = await _repro_metrics(db, start, end, location_id)
     loc_query = select(Location).where(Location.is_active == True)  # noqa: E712
     if location_id:
         loc_query = loc_query.where(Location.id == location_id)
     by_location = []
     for loc in (await db.execute(loc_query.order_by(Location.name))).scalars().all():
         by_location.append(LocationReproductionMetrics(
-            location_id=loc.id, location_name=loc.name, **(await _repro_metrics(db, year, loc.id))))
+            location_id=loc.id, location_name=loc.name, **(await _repro_metrics(db, start, end, loc.id))))
     return ReproductionAnalyticsResponse(year=year, location_id=location_id, by_location=by_location, **overall)
 
 
@@ -5730,6 +5779,653 @@ async def sync_reproductive_status(
             updated += 1
     await db.commit()
     return {"updated": updated}
+
+
+# ---------- Physical tag reconciliation ----------
+async def _load_reconciliation_session(db, session_id):
+    session = await db.get(ReconciliationSession, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Reconciliation session not found")
+    return session
+
+
+async def _reconciliation_result(db, session):
+    entries = (await db.execute(select(ReconciliationEntry).where(
+        ReconciliationEntry.session_id == session.id,
+    ).order_by(ReconciliationEntry.id))).scalars().all()
+    matched_ids = {e.matched_animal_id for e in entries if e.matched_animal_id is not None}
+    animals = (await db.execute(select(Animal).where(
+        or_(Animal.id.in_(matched_ids), and_(
+            Animal.location_id == session.location_id, Animal.status == AnimalStatus.ACTIVE,
+        )),
+    ).options(selectinload(Animal.category)).order_by(Animal.id))).scalars().all()
+    # The entry schema stores the match, but not its provenance. Infer the
+    # displayed match method from the currently active identifiers.
+    identifiers = (await db.execute(select(AnimalIdentifier).where(
+        AnimalIdentifier.animal_id.in_(matched_ids), AnimalIdentifier.is_active.is_(True),
+    ))).scalars().all()
+    identifier_keys = {(i.animal_id, i.id_type, i.id_value) for i in identifiers}
+    via_identifier = {e.matched_animal_id for e in entries
+                      if e.id_type != AnimalIdentifierType.VISUAL_TAG
+                      or (e.matched_animal_id, e.id_type, e.raw_value) in identifier_keys}
+    matched = [dict(animal_id=a.id, tag_number=a.tag_number, species=a.species,
+                    matched_via="identifier" if a.id in via_identifier else "tag_number")
+               for a in animals if a.id in matched_ids]
+    missing = [dict(animal_id=a.id, tag_number=a.tag_number, species=a.species,
+                    category=a.category.name_sw) for a in animals if a.id not in matched_ids]
+    unmatched = [dict(raw_value=e.raw_value, id_type=e.id_type)
+                 for e in entries if e.matched_animal_id is None]
+    denominator = len(matched) + len(missing)
+    location = await db.get(Location, session.location_id)
+    return ReconciliationResultResponse(
+        session_id=session.id, location_name=location.name,
+        session_date=session.session_date, input_type=session.input_type,
+        total_scanned=len(entries), matched=matched, unmatched_scan=unmatched,
+        in_system_not_seen=missing, matched_count=len(matched),
+        unmatched_scan_count=len(unmatched), in_system_not_seen_count=len(missing),
+        coverage_pct=100.0 * len(matched) / denominator if denominator else 0.0,
+    )
+
+
+async def _process_reconciliation_session(db, session_id):
+    session = await _load_reconciliation_session(db, session_id)
+    entries = (await db.execute(select(ReconciliationEntry).where(
+        ReconciliationEntry.session_id == session_id,
+    ).order_by(ReconciliationEntry.id))).scalars().all()
+    for entry in entries:
+        ids = set((await db.execute(select(AnimalIdentifier.animal_id).where(
+            AnimalIdentifier.id_type == entry.id_type,
+            AnimalIdentifier.id_value == entry.raw_value,
+            AnimalIdentifier.is_active.is_(True),
+        ))).scalars().all())
+        if not ids and entry.id_type == AnimalIdentifierType.VISUAL_TAG:
+            ids = set((await db.execute(select(Animal.id).where(
+                Animal.tag_number == entry.raw_value,
+            ))).scalars().all())
+        if len(ids) > 1:
+            raise HTTPException(status_code=409, detail=f"Ambiguous tag: {entry.raw_value}")
+        entry.matched_animal_id = next(iter(ids), None)
+        entry.match_status = "matched" if ids else "unmatched_scan"
+    await db.flush()
+    return await _reconciliation_result(db, session)
+
+
+@api_router.post("/reconciliation/sessions", response_model=ReconciliationResultResponse)
+async def create_reconciliation_session(
+    data: ReconciliationSessionCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    if await db.get(Location, data.location_id) is None:
+        raise HTTPException(status_code=404, detail="Location not found")
+    try:
+        session = ReconciliationSession(
+            **data.model_dump(exclude={"entries"}), recorded_by=current_user.id,
+        )
+        db.add(session)
+        await db.flush()
+        db.add_all([ReconciliationEntry(session_id=session.id, **entry.model_dump())
+                    for entry in data.entries])
+        await db.flush()
+        result = await _process_reconciliation_session(db, session.id)
+        await db.commit()
+        return result
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@api_router.get("/reconciliation/sessions", response_model=List[ReconciliationSessionSummary])
+async def list_reconciliation_sessions(
+    location_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    query = select(ReconciliationSession)
+    if location_id is not None:
+        query = query.where(ReconciliationSession.location_id == location_id)
+    if date_from is not None:
+        query = query.where(ReconciliationSession.session_date >= date_from)
+    if date_to is not None:
+        query = query.where(ReconciliationSession.session_date <= date_to)
+    sessions = (await db.execute(query.order_by(
+        ReconciliationSession.session_date.desc(), ReconciliationSession.id.desc(),
+    ))).scalars().all()
+    summaries = []
+    for session in sessions:
+        result = await _reconciliation_result(db, session)
+        summaries.append(ReconciliationSessionSummary(
+            id=session.id, created_at=session.created_at,
+            **result.model_dump(exclude={"session_id", "matched", "unmatched_scan", "in_system_not_seen"}),
+        ))
+    return summaries
+
+
+@api_router.get("/reconciliation/sessions/{session_id}", response_model=ReconciliationResultResponse)
+async def get_reconciliation_session(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    return await _reconciliation_result(db, await _load_reconciliation_session(db, session_id))
+
+
+@api_router.post("/reconciliation/sessions/{session_id}/reprocess", response_model=ReconciliationResultResponse)
+async def reprocess_reconciliation_session(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    try:
+        result = await _process_reconciliation_session(db, session_id)
+        await db.commit()
+        return result
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@api_router.post("/admin/import/pd-tests", response_model=PDTestImportResult)
+async def import_pd_tests(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a CSV")
+    result = PDTestImportResult(matched=0, events_created=0, not_found=[], skipped=[], total_rows=0)
+    aliases = {alias: value for value, names in (
+        (PDResult.PREGNANT, ("pregnant", "yes", "p")),
+        (PDResult.OPEN, ("open", "no", "negative", "n")),
+        (PDResult.REPEAT, ("recheck", "r", "check")),
+    ) for alias in names}
+    matched_ids = set()
+    stream = io.TextIOWrapper(file.file, encoding="utf-8-sig", newline="")
+    try:
+        reader = csv.DictReader(stream, strict=True)
+        required = {"tag_number", "test_date", "result", "months_pregnant", "vet", "notes"}
+        if (not reader.fieldnames or not required.issubset(reader.fieldnames)
+                or len(reader.fieldnames) != len(set(reader.fieldnames))):
+            raise HTTPException(status_code=400, detail="CSV must have unique headers including: " + ", ".join(sorted(required)))
+        for row in reader:
+            result.total_rows += 1
+            line = reader.line_num
+            if None in row or any(value is None for value in row.values()):
+                raise HTTPException(status_code=400, detail=f"CSV row {line}: incorrect column count")
+            row = {key: value.strip() for key, value in row.items()}
+            missing = [key for key in ("tag_number", "test_date") if not row[key]]
+            if missing:
+                result.skipped.append(f"Row {line}: missing {', '.join(missing)}")
+                continue
+            try:
+                if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", row["test_date"]):
+                    raise ValueError()
+                test_date = date.fromisoformat(row["test_date"])
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"CSV row {line}: test_date must be a valid YYYY-MM-DD date")
+            pd_result = aliases.get(row["result"].lower())
+            if pd_result is None:
+                raise HTTPException(status_code=400, detail=f"CSV row {line}: invalid PD result")
+            months = None
+            if pd_result == PDResult.PREGNANT and row["months_pregnant"]:
+                if not re.fullmatch(r"[0-9]+", row["months_pregnant"]) or len(row["months_pregnant"]) > 10:
+                    raise HTTPException(status_code=400, detail=f"CSV row {line}: months_pregnant must be a nonnegative integer")
+                months = int(row["months_pregnant"])
+                if months > 2147483647:
+                    raise HTTPException(status_code=400, detail=f"CSV row {line}: months_pregnant exceeds the integer limit")
+            if len(row["tag_number"]) > 100 or len(row["vet"]) > 100:
+                raise HTTPException(status_code=400, detail=f"CSV row {line}: tag_number and vet must not exceed 100 characters")
+            animals = (await db.execute(select(Animal).where(
+                Animal.tag_number == row["tag_number"], Animal.status == AnimalStatus.ACTIVE,
+            ).limit(2).with_for_update())).scalars().all()
+            if len(animals) > 1:
+                raise HTTPException(status_code=409, detail=f"CSV row {line}: ambiguous active tag {row['tag_number']}")
+            if not animals:
+                result.not_found.append(row["tag_number"])
+                continue
+            animal = animals[0]
+            event = ReproductiveEvent(
+                animal_id=animal.id, event_type=ReproductiveEventType.PD_TEST,
+                event_date=test_date, pd_result=pd_result, months_pregnant=months,
+                vet=row["vet"] or None, notes=row["notes"] or None, recorded_by=current_user.id,
+            )
+            db.add(event)
+            await db.flush()
+            await _apply_reproductive_status(db, animal.id, event)
+            matched_ids.add(animal.id)
+            result.events_created += 1
+        result.matched = len(matched_ids)
+        await db.commit()
+        return result
+    except (UnicodeError, csv.Error) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Invalid UTF-8 CSV file") from exc
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        stream.detach()
+
+
+# ---------- Customers and sale details ----------
+async def _sales_customer(db, customer_id):
+    customer = await db.get(Customer, customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer
+
+
+async def _sales_line_items(db, date_from=None, date_to=None, location_id=None,
+                            species=None, customer_id=None):
+    query = (select(Event, DailyLog.log_date, Location.name, Category.name_sw,
+                    SaleDetail, Customer.name)
+             .join(DailyLog, Event.daily_log_id == DailyLog.id)
+             .join(Location, DailyLog.location_id == Location.id)
+             .outerjoin(Category, Event.category_id == Category.id)
+             .join(SaleDetail, SaleDetail.event_id == Event.id)
+             .outerjoin(Customer, SaleDetail.customer_id == Customer.id)
+             .where(Event.event_type == EventType.SOLD))
+    if date_from is not None:
+        query = query.where(DailyLog.log_date >= date_from)
+    if date_to is not None:
+        query = query.where(DailyLog.log_date <= date_to)
+    if location_id is not None:
+        query = query.where(DailyLog.location_id == location_id)
+    if species is not None:
+        query = query.where(Event.species == species)
+    if customer_id is not None:
+        query = query.where(SaleDetail.customer_id == customer_id)
+    rows = (await db.execute(query.order_by(DailyLog.log_date.desc(), Event.id.desc()))).all()
+    return [SalesLineItem(date=day, farm=farm, species=event.species, category=category,
+                          qty=event.count, price_per_head=detail.price_per_head,
+                          total_price=detail.total_price, customer_name=customer_name,
+                          event_id=event.id)
+            for event, day, farm, category, detail, customer_name in rows]
+
+
+@api_router.get("/customers", response_model=List[CustomerResponse])
+async def list_customers(
+    is_active: Optional[bool] = None,
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    query = select(Customer)
+    if is_active is not None:
+        query = query.where(Customer.is_active == is_active)
+    if search:
+        query = query.where(func.lower(Customer.name).contains(search.strip().lower(), autoescape=True))
+    return (await db.execute(query.order_by(Customer.name, Customer.id))).scalars().all()
+
+
+@api_router.post("/customers", response_model=CustomerResponse)
+async def create_customer(
+    data: CustomerCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    customer = Customer(**data.model_dump(), created_by=current_user.id)
+    db.add(customer)
+    await db.commit()
+    await db.refresh(customer)
+    return customer
+
+
+@api_router.get("/customers/{customer_id}", response_model=CustomerDetailResponse)
+async def get_customer(
+    customer_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    customer = await _sales_customer(db, customer_id)
+    return CustomerDetailResponse(
+        **CustomerResponse.model_validate(customer).model_dump(),
+        purchases=await _sales_line_items(db, customer_id=customer_id),
+    )
+
+
+@api_router.put("/customers/{customer_id}", response_model=CustomerResponse)
+async def update_customer(
+    customer_id: int,
+    data: CustomerUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    customer = await _sales_customer(db, customer_id)
+    for key, value in data.model_dump(exclude_unset=True).items():
+        setattr(customer, key, value)
+    await db.commit()
+    await db.refresh(customer)
+    return customer
+
+
+@api_router.delete("/customers/{customer_id}")
+async def delete_customer(
+    customer_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    customer = await _sales_customer(db, customer_id)
+    customer.is_active = False
+    await db.commit()
+    return {"message": "Customer deactivated"}
+
+
+@api_router.get("/customers/{customer_id}/purchases", response_model=List[SalesLineItem])
+async def customer_purchases(
+    customer_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    await _sales_customer(db, customer_id)
+    return await _sales_line_items(db, customer_id=customer_id)
+
+
+async def _sale_event(db, event_id, lock=False):
+    query = select(Event).where(Event.id == event_id)
+    if lock:
+        query = query.with_for_update()
+    event = (await db.execute(query)).scalar_one_or_none()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event.event_type != EventType.SOLD:
+        raise HTTPException(status_code=400, detail="Sale details require a SOLD event")
+    return event
+
+
+async def _sale_detail_response(db, detail):
+    customer = await db.get(Customer, detail.customer_id) if detail.customer_id is not None else None
+    return SaleDetailResponse(
+        id=detail.id, event_id=detail.event_id, customer_id=detail.customer_id,
+        customer_name=customer.name if customer else None, price_per_head=detail.price_per_head,
+        total_price=detail.total_price, notes=detail.notes, created_at=detail.created_at,
+    )
+
+
+@api_router.post("/events/{event_id}/sale-detail", response_model=SaleDetailResponse)
+async def save_sale_detail(
+    event_id: int,
+    data: SaleDetailCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    try:
+        # Lock the existing event to serialize concurrent upserts for this sale.
+        event = await _sale_event(db, event_id, lock=True)
+        values = data.model_dump(exclude_unset=True)
+        if data.customer_id is not None:
+            await _sales_customer(db, data.customer_id)
+        detail = (await db.execute(select(SaleDetail).where(SaleDetail.event_id == event_id))).scalar_one_or_none()
+        new = detail is None
+        if new:
+            detail = SaleDetail(event_id=event_id, recorded_by=current_user.id)
+        for key, value in values.items():
+            setattr(detail, key, value)
+        # A supplied non-null total wins. Notes/customer-only updates preserve the
+        # saved total; a new price or an explicit null total requests calculation.
+        if data.total_price is None and (new or "price_per_head" in values or "total_price" in values):
+            detail.total_price = (detail.price_per_head * event.count
+                                  if detail.price_per_head is not None else None)
+        if detail.total_price is not None and not Decimal("0") <= detail.total_price <= Decimal("9999999999.99"):
+            raise HTTPException(status_code=400, detail="Computed total is outside the supported price range")
+        db.add(detail)
+        await db.flush()
+        await db.refresh(detail)
+        response = await _sale_detail_response(db, detail)
+        await db.commit()
+        return response
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@api_router.get("/events/{event_id}/sale-detail", response_model=SaleDetailResponse)
+async def get_sale_detail(
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    await _sale_event(db, event_id)
+    detail = (await db.execute(select(SaleDetail).where(SaleDetail.event_id == event_id))).scalar_one_or_none()
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Sale detail not found")
+    return await _sale_detail_response(db, detail)
+
+
+@api_router.get("/reports/sales", response_model=SalesReportResponse)
+async def sales_report(
+    date_from: date,
+    date_to: date,
+    location_id: Optional[int] = None,
+    species: Optional[SpeciesType] = None,
+    customer_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    if date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from must not be after date_to")
+    items = await _sales_line_items(db, date_from, date_to, location_id, species, customer_id)
+    revenue = sum((item.total_price or Decimal("0") for item in items), Decimal("0.00"))
+    head = sum(item.qty for item in items)
+    buckets = {}
+    for item in items:
+        month = item.date.strftime("%Y-%m")
+        bucket = buckets.setdefault(month, {"month": month, "revenue": Decimal("0.00"), "head_count": 0})
+        bucket["revenue"] += item.total_price or Decimal("0")
+        bucket["head_count"] += item.qty
+    return SalesReportResponse(
+        summary={"total_revenue": revenue, "total_head": head,
+                 "avg_price_per_head": (revenue / head).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if head else Decimal("0.00"),
+                 "period": {"from": date_from, "to": date_to}},
+        by_period=[buckets[month] for month in sorted(buckets)], line_items=items,
+    )
+
+
+# ---------- Structured mortality ----------
+async def _seed_death_causes(connection):
+    for order, name in enumerate(("Disease", "Predation", "Accident", "Starvation/Drought",
+                                  "Dystocia", "Unknown", "Other")):
+        await connection.execute(text(
+            "INSERT INTO death_causes (name, is_active, sort_order) VALUES (:name, true, :sort_order) "
+            "ON CONFLICT (name) DO NOTHING"
+        ), {"name": name, "sort_order": order})
+
+
+async def _validate_death_cause(db, event_type, cause_id, existing_id=None):
+    if cause_id is None:
+        return
+    if event_type != EventType.DEATH:
+        raise HTTPException(status_code=400, detail="Structured death causes apply only to DEATH events")
+    cause = await db.get(DeathCause, cause_id)
+    if cause is None:
+        raise HTTPException(status_code=404, detail="Death cause not found")
+    if not cause.is_active and cause_id != existing_id:
+        raise HTTPException(status_code=400, detail="Death cause is inactive")
+
+
+async def _get_death_cause(db, cause_id):
+    cause = await db.get(DeathCause, cause_id)
+    if cause is None:
+        raise HTTPException(status_code=404, detail="Death cause not found")
+    return cause
+
+
+async def _save_death_cause(db, cause):
+    try:
+        db.add(cause)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A death cause with this name already exists")
+    await db.refresh(cause)
+    return cause
+
+
+@api_router.get("/death-causes", response_model=List[DeathCauseResponse])
+async def list_death_causes(
+    is_active: bool = True,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    return (await db.execute(select(DeathCause).where(DeathCause.is_active == is_active)
+                            .order_by(DeathCause.sort_order, DeathCause.name))).scalars().all()
+
+
+@api_router.post("/death-causes", response_model=DeathCauseResponse)
+async def create_death_cause(
+    data: DeathCauseCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    return await _save_death_cause(db, DeathCause(**data.model_dump()))
+
+
+@api_router.put("/death-causes/{cause_id}", response_model=DeathCauseResponse)
+async def update_death_cause(
+    cause_id: int, data: DeathCauseUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    cause = await _get_death_cause(db, cause_id)
+    for key, value in data.model_dump(exclude_unset=True).items():
+        setattr(cause, key, value)
+    return await _save_death_cause(db, cause)
+
+
+@api_router.delete("/death-causes/{cause_id}")
+async def deactivate_death_cause(
+    cause_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    cause = await _get_death_cause(db, cause_id)
+    cause.is_active = False
+    await db.commit()
+    return {"message": "Death cause deactivated"}
+
+
+@api_router.get("/settings/mortality-thresholds", response_model=List[MortalityThresholdResponse])
+async def get_mortality_thresholds(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    return (await db.execute(select(MortalityThreshold).order_by(MortalityThreshold.species))).scalars().all()
+
+
+@api_router.put("/settings/mortality-thresholds", response_model=List[MortalityThresholdResponse])
+async def update_mortality_thresholds(
+    data: List[MortalityThresholdUpdate],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    if len({item.species for item in data}) != len(data):
+        raise HTTPException(status_code=400, detail="Each species may appear only once")
+    # Dialect-specific ON CONFLICT keeps first-time concurrent upserts atomic.
+    if db.bind.dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as threshold_insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert as threshold_insert
+    try:
+        for item in sorted(data, key=lambda item: item.species.value):
+            statement = threshold_insert(MortalityThreshold).values(
+                species=item.species, threshold=item.threshold, updated_by=current_user.id,
+            )
+            await db.execute(statement.on_conflict_do_update(
+                index_elements=[MortalityThreshold.species],
+                set_={"threshold": item.threshold, "updated_by": current_user.id, "updated_at": func.now()},
+            ))
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    return (await db.execute(select(MortalityThreshold).order_by(MortalityThreshold.species)
+                            .execution_options(populate_existing=True))).scalars().all()
+
+
+@api_router.get("/reports/mortality", response_model=MortalityReportResponse)
+async def mortality_report(
+    date_from: date, date_to: date,
+    location_id: Optional[int] = None,
+    species: Optional[SpeciesType] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    if date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from must not be after date_to")
+    opening = await build_stock_snapshot(db, date_from, location_id)
+    closing = await build_stock_snapshot(db, date_to, location_id)
+    stocks = {}
+    for snapshot, boundary in ((opening, 0), (closing, 1)):
+        for (loc, sp, _category), value in snapshot.items():
+            if location_id is not None and loc != location_id:
+                continue
+            if species is not None and species != sp:
+                continue
+            stocks.setdefault((loc, sp), [0, 0])[boundary] += value["count"]
+    query = (select(Event, DailyLog.log_date, DailyLog.location_id, DeathCause.name)
+             .join(DailyLog, Event.daily_log_id == DailyLog.id)
+             .outerjoin(DeathCause, Event.cause_of_death_id == DeathCause.id)
+             .where(Event.event_type == EventType.DEATH,
+                    DailyLog.log_date >= date_from, DailyLog.log_date <= date_to))
+    if location_id is not None:
+        query = query.where(DailyLog.location_id == location_id)
+    if species is not None:
+        query = query.where(Event.species == species)
+    events = (await db.execute(query)).all()
+    deaths, causes = {}, {}
+    total = 0
+    # Twelve calendar months ending in date_to's month, clipped to the range.
+    end_month = (date_to.year - 1) * 12 + date_to.month - 1
+    start_month = max((date_from.year - 1) * 12 + date_from.month - 1, end_month - 11)
+    months = {}
+    for index in range(start_month, end_month + 1):
+        key = f"{index // 12 + 1:04d}-{index % 12 + 1:02d}"
+        months[key] = {"month": key, "deaths": 0, "by_species": {sp.value: 0 for sp in SpeciesType}}
+    for event, day, loc, cause in events:
+        key = (loc, event.species)
+        deaths[key] = deaths.get(key, 0) + event.count
+        stocks.setdefault(key, [0, 0])
+        total += event.count
+        if cause is not None:
+            causes[cause] = causes.get(cause, 0) + event.count
+        month = day.strftime("%Y-%m")
+        if month in months:
+            months[month]["deaths"] += event.count
+            months[month]["by_species"][event.species.value] += event.count
+    thresholds = {row.species: row.threshold for row in
+                  (await db.execute(select(MortalityThreshold))).scalars().all()}
+    locations = {row.id: row.name for row in (await db.execute(select(Location))).scalars().all()}
+
+    def metrics(sp, count, bounds):
+        average = Decimal(bounds[0] + bounds[1]) / 2
+        rate = Decimal(count) / average * 100 if average > 0 else None
+        threshold = thresholds.get(sp)
+        return dict(species=sp, deaths=count, avg_stock=float(average),
+                    mortality_rate_pct=round(float(rate), 2) if rate is not None else None,
+                    threshold_pct=float(threshold) if threshold is not None else None,
+                    is_alert=rate is not None and threshold is not None and rate > threshold)
+
+    farms, aggregate = [], {}
+    for (loc, sp), bounds in stocks.items():
+        count = deaths.get((loc, sp), 0)
+        if not count and not any(bounds):
+            continue
+        farms.append(dict(farm=locations.get(loc, "Unknown"), location_id=loc, **metrics(sp, count, bounds)))
+        combined = aggregate.setdefault(sp, [0, 0, 0])
+        combined[0] += bounds[0]
+        combined[1] += bounds[1]
+        combined[2] += count
+    farms.sort(key=lambda row: (not row["is_alert"], -(row["mortality_rate_pct"] or 0), row["farm"], row["species"].value))
+    return MortalityReportResponse(
+        summary={"total_deaths": total, "period": {"from": date_from, "to": date_to}},
+        by_species=[metrics(sp, values[2], values[:2]) for sp, values in sorted(aggregate.items(), key=lambda pair: pair[0].value)],
+        by_farm=farms,
+        by_cause=[dict(cause_name=name, count=count, pct_of_total=round(count / total * 100, 2) if total else 0)
+                  for name, count in sorted(causes.items(), key=lambda pair: (pair[0].lower() == "unknown", -pair[1], pair[0]))],
+        by_month=list(months.values()), flagged=[row for row in farms if row["is_alert"]],
+    )
 
 
 # Include router after all route declarations.

@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../co
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Calendar } from '../components/ui/calendar';
+import DateRangePicker from '../components/DateRangePicker';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
@@ -417,6 +418,13 @@ function Reports() {
   const [endDate, setEndDate] = useState(new Date());
   const [locationId, setLocationId] = useState('all');
 
+  function handleRangeChange(range) {
+    if (range && range.from && range.to) {
+      setStartDate(range.from);
+      setEndDate(range.to);
+    }
+  }
+
   useEffect(function() {
     loadLocations();
     loadDailyReport();
@@ -774,32 +782,8 @@ function Reports() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Start Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(startDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={startDate} onSelect={function(d) { if (d) setStartDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">End Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(endDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={endDate} onSelect={function(d) { if (d) setEndDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
+                  <label className="text-xs text-muted-foreground">Date Range</label>
+                  <DateRangePicker value={{ from: startDate, to: endDate }} onChange={handleRangeChange} />
                 </div>
                 <Button onClick={handleGenerateReport} className="gap-2" data-testid="generate-analytics-btn">
                   <MagnifyingGlass className="h-4 w-4" />
@@ -879,32 +863,8 @@ function Reports() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Start Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(startDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={startDate} onSelect={function(d) { if (d) setStartDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">End Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(endDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={endDate} onSelect={function(d) { if (d) setEndDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
+                  <label className="text-xs text-muted-foreground">Date Range</label>
+                  <DateRangePicker value={{ from: startDate, to: endDate }} onChange={handleRangeChange} />
                 </div>
                 <Button onClick={handleGenerateReport} className="gap-2" data-testid="generate-breeding-btn">
                   <MagnifyingGlass className="h-4 w-4" />
@@ -954,32 +914,8 @@ function Reports() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Start Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(startDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={startDate} onSelect={function(d) { if (d) setStartDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">End Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(endDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={endDate} onSelect={function(d) { if (d) setEndDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
+                  <label className="text-xs text-muted-foreground">Date Range</label>
+                  <DateRangePicker value={{ from: startDate, to: endDate }} onChange={handleRangeChange} />
                 </div>
                 <Button onClick={handleGenerateReport} className="gap-2" data-testid="generate-death-btn">
                   <MagnifyingGlass className="h-4 w-4" />
@@ -1108,32 +1044,8 @@ function Reports() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Start Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(startDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={startDate} onSelect={function(d) { if (d) setStartDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">End Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(endDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={endDate} onSelect={function(d) { if (d) setEndDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
+                  <label className="text-xs text-muted-foreground">Date Range</label>
+                  <DateRangePicker value={{ from: startDate, to: endDate }} onChange={handleRangeChange} />
                 </div>
                 <Button onClick={handleGenerateReport} className="gap-2">
                   <MagnifyingGlass className="h-4 w-4" />
@@ -1210,32 +1122,8 @@ function Reports() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Start Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(startDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={startDate} onSelect={function(d) { if (d) setStartDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">End Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(endDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={endDate} onSelect={function(d) { if (d) setEndDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
+                  <label className="text-xs text-muted-foreground">Date Range</label>
+                  <DateRangePicker value={{ from: startDate, to: endDate }} onChange={handleRangeChange} />
                 </div>
                 <Button onClick={handleGenerateReport} className="gap-2">
                   <MagnifyingGlass className="h-4 w-4" />
@@ -1355,32 +1243,8 @@ function Reports() {
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Start Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(startDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={startDate} onSelect={function(d) { if (d) setStartDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">End Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="gap-2">
-                        <CalendarBlank className="h-4 w-4" />
-                        {format(endDate, 'MMM d, yyyy')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={endDate} onSelect={function(d) { if (d) setEndDate(d); }} />
-                    </PopoverContent>
-                  </Popover>
+                  <label className="text-xs text-muted-foreground">Date Range</label>
+                  <DateRangePicker value={{ from: startDate, to: endDate }} onChange={handleRangeChange} />
                 </div>
                 <Button onClick={handleGenerateDetailedReport} className="gap-2" data-testid="generate-detailed-btn">
                   <MagnifyingGlass className="h-4 w-4" />

@@ -22,6 +22,9 @@ import Reproduction from "./pages/Reproduction";
 import AnimalDetail from "./pages/AnimalDetail";
 import RepeatBreeders from "./pages/RepeatBreeders";
 
+import Reconciliation from "./pages/Reconciliation";
+import MortalityDashboard from "./pages/MortalityDashboard";
+
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth();
@@ -208,6 +211,10 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+
+      <Route path="/reconciliation" element={<ProtectedRoute><Reconciliation /></ProtectedRoute>} />
+
+      <Route path="/reports/mortality" element={<ProtectedRoute><MortalityDashboard /></ProtectedRoute>} />
 
       {/* Catch all - redirect to dashboard */}
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -144,8 +144,13 @@ export const deleteVaccineType = (id) => api.delete(`/vaccine-types/${id}`);
 export const getLastVaccinations = () => api.get('/farm-health-events/last-vaccinations');
 
 // Reproduction (backend: docs/decisions/0008)
-export const getReproductionAnalytics = (locationId, year) =>
-  api.get('/analytics/reproduction', { params: { location_id: locationId, year } });
+// `period` is a year number, or { date_from, date_to } (YYYY-MM-DD) for a custom range.
+export const getReproductionAnalytics = (locationId, period) =>
+  api.get('/analytics/reproduction', {
+    params: typeof period === 'object' && period !== null
+      ? { location_id: locationId, date_from: period.date_from, date_to: period.date_to }
+      : { location_id: locationId, year: period },
+  });
 export const getReproductiveCycles = (params) => api.get('/reproductive-cycles', { params });
 export const getReproductiveCycle = (id) => api.get(`/reproductive-cycles/${id}`);
 export const createReproductiveCycle = (data) => api.post('/reproductive-cycles', data);
@@ -210,3 +215,27 @@ export const listReproductiveEvents = (animalId) => api.get(`/animals/${animalId
 export const createReproductiveEvent = (animalId, data) => api.post(`/animals/${animalId}/reproductive-events`, data);
 export const listRepeatBreeders = (params) => api.get('/animals/repeat-breeders', { params });
 export const syncReproductiveStatus = () => api.post('/admin/tasks/sync-reproductive-status');
+
+// Physical tag reconciliation sessions
+export const createReconciliationSession = (data) => api.post("/reconciliation/sessions", data);
+export const listReconciliationSessions = (params) => api.get("/reconciliation/sessions", { params });
+export const getReconciliationSession = (id) => api.get(`/reconciliation/sessions/${id}`);
+export const reprocessReconciliationSession = (id) => api.post(`/reconciliation/sessions/${id}/reprocess`);
+
+// Bulk pregnancy diagnosis results
+export const importPDTests = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/admin/import/pd-tests', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+// Structured mortality reporting and settings
+export const listDeathCauses = (params) => api.get('/death-causes', { params });
+export const createDeathCause = (data) => api.post('/death-causes', data);
+export const updateDeathCause = (id, data) => api.put(`/death-causes/${id}`, data);
+export const deleteDeathCause = (id) => api.delete(`/death-causes/${id}`);
+export const getMortalityThresholds = () => api.get('/settings/mortality-thresholds');
+export const updateMortalityThresholds = (data) => api.put('/settings/mortality-thresholds', data);
+export const getMortalityReport = (params) => api.get('/reports/mortality', { params });

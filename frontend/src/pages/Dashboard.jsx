@@ -8,6 +8,8 @@ import { Skeleton } from '../components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Cow, TrendUp, TrendDown, Plus, Heartbeat, Skull, Baby, MapPin, FirstAidKit, WarningCircle, Syringe, Tag } from '@phosphor-icons/react';
 import { SPECIES_CONFIG, formatDate } from '../lib/utils';
+import { format } from 'date-fns';
+import DateRangePicker, { lastDaysRange } from '../components/DateRangePicker';
 import { useAuth } from '../context/AuthContext';
 import { coverageTone, summariseReconciliation, TONE_BAR, TONE_TEXT } from '../lib/registerCoverage';
 
@@ -227,7 +229,9 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState('all');
-  const [selectedPeriod, setSelectedPeriod] = useState('30');
+  const [range, setRange] = useState(() => lastDaysRange(30));
+  const dateFrom = format(range.from, 'yyyy-MM-dd');
+  const dateTo = format(range.to, 'yyyy-MM-dd');
   const [healthSummaries, setHealthSummaries] = useState([]);
   const [vaccinationSummaries, setVaccinationSummaries] = useState([]);
   const [registerRows, setRegisterRows] = useState(null);
@@ -239,7 +243,7 @@ function Dashboard() {
 
   useEffect(function() {
     loadDashboard();
-  }, [selectedLocation, selectedPeriod]);
+  }, [selectedLocation, dateFrom, dateTo]);
 
   async function loadLocations() {
     try {
@@ -270,10 +274,8 @@ function Dashboard() {
       if (selectedLocation && selectedLocation !== 'all') {
         params.location_id = selectedLocation;
       }
-      const periodDays = parseInt(selectedPeriod, 10);
-      if (!Number.isNaN(periodDays)) {
-        params.period_days = periodDays;
-      }
+      params.date_from = dateFrom;
+      params.date_to = dateTo;
       const response = await getDashboard(params);
       setData(response.data);
     } catch (error) {
@@ -306,7 +308,7 @@ function Dashboard() {
   const locationTotals = data?.location_totals || [];
   const herdPerformance = data?.herd_performance || [];
   const netChanges = data?.net_changes || [];
-  const periodDays = parseInt(selectedPeriod, 10) || 30;
+  const periodLabel = `${format(range.from, 'd MMM yyyy')} – ${format(range.to, 'd MMM yyyy')}`;
   
   // Build arrays to avoid nested maps
   const speciesCards = [];
@@ -359,18 +361,7 @@ function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-            <SelectTrigger className="w-[180px]" data-testid="period-filter">
-              <SelectValue placeholder="Last 30 Days" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7">Last 7 Days</SelectItem>
-              <SelectItem value="30">Last 30 Days</SelectItem>
-              <SelectItem value="90">Last 90 Days</SelectItem>
-              <SelectItem value="180">Last 180 Days</SelectItem>
-              <SelectItem value="365">Last 365 Days</SelectItem>
-            </SelectContent>
-          </Select>
+          <DateRangePicker value={range} onChange={setRange} />
           <Select value={selectedLocation} onValueChange={setSelectedLocation}>
             <SelectTrigger className="w-[200px]" data-testid="location-filter">
               <MapPin className="h-4 w-4 mr-2 text-muted-foreground" />
@@ -422,7 +413,7 @@ function Dashboard() {
           <div>
             <h2 className="font-heading text-xl font-semibold mb-4 flex items-center gap-2">
               <Heartbeat className="h-5 w-5 text-primary" />
-              Herd Performance (Last {periodDays} Days)
+              Herd Performance ({periodLabel})
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {perfCards}
@@ -434,7 +425,7 @@ function Dashboard() {
               <CardHeader>
                 <CardTitle className="font-heading flex items-center gap-2">
                   <TrendUp className="h-5 w-5 text-primary" />
-                  Net Change in Animals (Last {periodDays} Days)
+                  Net Change in Animals ({periodLabel})
                 </CardTitle>
               </CardHeader>
               <CardContent>

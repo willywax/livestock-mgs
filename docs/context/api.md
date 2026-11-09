@@ -48,7 +48,7 @@ Animal-register sync (decision 0009): `POST /api/daily-logs` (events embedded; s
 
 | GET | `/api/stock-levels` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list stock levels | path/query only -> List[StockLevelResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1495` |
 | POST | `/api/stock-levels/recompute` | JWT ADMIN | recompute stock levels endpoint | path/query only -> dict (no model) | Admin/manual; no frontend wrapper found | `backend/server.py:1528` |
-| GET | `/api/dashboard` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get dashboard | path/query only -> DashboardResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1540` |
+| GET | `/api/dashboard` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get dashboard | query: `location_id`, `period_days` (default 30), optional `date_from`/`date_to` (override `period_days` for herd performance and net changes; 400 if `date_to` < `date_from`) -> DashboardResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1540` |
 | GET | `/api/reports/daily` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get daily report | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1882` |
 | GET | `/api/reports/range` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get range report | path/query only -> dict (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1935` |
 | GET | `/api/reports/analytics` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get analytics report | path/query only -> AnalyticsResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1990` |
@@ -98,7 +98,7 @@ All in `backend/server.py` (block "REPRODUCTION & ANIMAL PROFILE", registered be
 | GET/POST | `/api/animals/{id}/notes` | newest first |
 | PUT/DELETE | `/api/animals/{id}/notes/{note_id}` | |
 | GET | `/api/animals/{id}/timeline` | merged reproduction milestones, matching farm-health events, BCS and notes, newest first |
-| GET | `/api/analytics/reproduction` | filters `location_id`, `year`; rates are 0-1 fractions; Koo = `categories.name_sw == 'Koo'` |
+| GET | `/api/analytics/reproduction` | filters `location_id`, `year`, or `date_from`+`date_to` together (override `year`; Koo count is taken at `date_from`; 400 if only one is given or reversed); rates are 0-1 fractions; Koo = `categories.name_sw == 'Koo'` |
 
 ## Frontend pages using these routes (added 2026-11-08)
 - `/reproduction` (`frontend/src/pages/Reproduction.jsx`, all roles; write actions need admin/data_entry, bull assignment admin only): KPI cards (`GET /api/analytics/reproduction` for "All species"; computed in the browser per species), needs-attention list, upcoming and recent births, bull assignments. Uses `GET/POST/PUT /api/reproductive-cycles`, `GET/POST/PUT /api/bull-assignments`, `GET/POST /api/bcs-records`, `GET /api/animals`, `/api/opening-balances`, `/api/stock-levels`.

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { addDays, differenceInCalendarDays, format, startOfDay } from 'date-fns';
+import DateRangePicker, { yearToDateRange } from '../components/DateRangePicker';
 import { toast } from 'sonner';
 import { CaretDown, CaretRight, Pencil, Plus } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
@@ -59,12 +60,11 @@ function Pill({ tone, title, children }) {
 // For a single species the same definitions are computed here (the endpoint has
 // no species filter), see docs/decisions/0008 and ROADMAP.
 // ---------------------------------------------------------------------------
-function kooCountFrom(kooData, year) {
+function kooCountFrom(kooData, start) {
   if (!kooData) return 0;
-  const jan1 = new Date(year, 0, 1);
   const latest = new Map();
   kooData.balances
-    .filter((b) => b.category_name_sw === 'Koo' && parseDate(b.period_start) <= jan1)
+    .filter((b) => b.category_name_sw === 'Koo' && parseDate(b.period_start) <= start)
     .forEach((b) => {
       const key = `${b.location_id}|${b.species}|${b.category_id}`;
       const prev = latest.get(key);
@@ -76,9 +76,7 @@ function kooCountFrom(kooData, year) {
     .reduce((sum, s) => sum + s.current_count, 0);
 }
 
-function computeMetrics({ cycles, animals, year, kooCount }) {
-  const start = new Date(year, 0, 1);
-  const end = new Date(year, 11, 31);
+function computeMetrics({ cycles, animals, start, end, kooCount }) {
   const inYear = (s) => {
     if (!s) return false;
     const d = parseDate(s);
@@ -254,7 +252,6 @@ function BullDialog({ state, onClose, onSaved, males, locations, defaultLocation
 // ---------------------------------------------------------------------------
 function Reproduction() {
   const { isAdmin, isDataEntry } = useAuth();
-  const currentYear = new Date().getFullYear();
   const [locations, setLocations] = useState([]);
   const [animals, setAnimals] = useState([]);
   const [cycles, setCycles] = useState([]);
@@ -264,7 +261,11 @@ function Reproduction() {
   const [loading, setLoading] = useState(true);
 
   const [locationId, setLocationId] = useState('all');
-  const [year, setYear] = useState(currentYear);
+  const [range, setRange] = useState(yearToDateRange);
+  const start = startOfDay(range.from);
+  const end = startOfDay(range.to);
+  const dateFrom = format(range.from, 'yyyy-MM-dd');
+  const dateTo = format(range.to, 'yyyy-MM-dd');
   const [species, setSpecies] = useState('all');
   const [showAll, setShowAll] = useState(false);
   const [bullsOpen, setBullsOpen] = useState(false);
@@ -290,7 +291,7 @@ function Reproduction() {
       const [cycleRes, bullRes, analyticsRes] = await Promise.all([
         getReproductiveCycles({ location_id: locationParam }),
         getBullAssignments({ active_only: true, location_id: locationParam }),
-        getReproductionAnalytics(locationParam, year),
+        getReproductionAnalytics(locationParam, { date_from: dateFrom, date_to: dateTo }),
       ]);
       setCycles(cycleRes.data);
       setBulls(bullRes.data);
@@ -300,7 +301,7 @@ function Reproduction() {
     } finally {
       setLoading(false);
     }
-  }, [locationParam, year]);
+  }, [locationParam, dateFrom, dateTo]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -327,17 +328,17 @@ function Reproduction() {
     const pool = animals.filter(
       (a) => a.species === species && (!locationParam || a.location_id === locationParam)
     );
-    return computeMetrics({ cycles: scoped, animals: pool, year, kooCount: kooCountFrom(kooData, year) });
-  }, [species, analytics, animals, scoped, year, kooData, locationParam]);
+    return computeMetrics({ cycles: scoped, animals: pool, start: startOfDay(range.from), end: startOfDay(range.to), kooCount: kooCountFrom(kooData, startOfDay(range.from)) });
+  }, [species, analytics, animals, scoped, range, kooData, locationParam]);
 
   const intervalRows = useMemo(() => {
-    const start = new Date(year, 0, 1);
-    const end = new Date(year, 11, 31);
+    const from = startOfDay(range.from);
+    const to = startOfDay(range.to);
     const bySpecies = {};
     scoped.forEach((c) => {
       if (c.calving_interval_days === null || c.calving_interval_days === undefined || !c.actual_calving_date) return;
       const d = parseDate(c.actual_calving_date);
-      if (d < start || d > end) return;
+      if (d < from || d > to) return;
       const sp = speciesOf(c);
       if (!sp) return;
       bySpecies[sp] = bySpecies[sp] || { days: [], animals: new Set() };
@@ -349,7 +350,7 @@ function Reproduction() {
       enough: bySpecies[sp].animals.size >= 2, // average needs at least 2 animals with 2+ calvings
       avg: Math.round(bySpecies[sp].days.reduce((a, b) => a + b, 0) / bySpecies[sp].days.length),
     }));
-  }, [scoped, year, speciesOf]);
+  }, [scoped, range, speciesOf]);
 
   const servedCount = scoped.filter((c) => c.status === 'served').length;
   const rate = (v) => (v === null || v === undefined ? null : Math.round(v * 1000) / 10);
@@ -471,7 +472,6 @@ function Reproduction() {
     return <Pill tone={tone}>{label}</Pill>;
   };
 
-  const years = [currentYear, currentYear - 1, currentYear - 2];
   const menuItems = [
     { label: 'Record service', type: 'service' },
     { label: 'Record PD check', type: 'pd' },
@@ -493,13 +493,7 @@ function Reproduction() {
               {locations.map((l) => <SelectItem key={l.id} value={String(l.id)}>{l.name}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
-            <SelectTrigger className="w-28" data-testid="repro-year"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {years.map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {isDataEntry && (
+          <DateRangePicker value={range} onChange={setRange} />          {isDataEntry && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button className="gap-2" data-testid="log-event-btn"><Plus className="h-4 w-4" />Log event</Button>

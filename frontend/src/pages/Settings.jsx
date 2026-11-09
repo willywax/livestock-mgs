@@ -21,6 +21,8 @@ import { Gear, Plus, Trash, FirstAid, Cow, Dog, Syringe, PencilSimple } from '@p
 import { toast } from 'sonner';
 import { SPECIES_CONFIG } from '../lib/utils';
 import { importAnimalIdentifiers } from '../lib/api';
+import { importPDTests } from '../lib/api';
+import { listDeathCauses, createDeathCause, updateDeathCause, deleteDeathCause, getMortalityThresholds, updateMortalityThresholds } from '../lib/api';
 
 function IdentifierImportCard() {
   const [file, setFile] = useState(null);
@@ -250,6 +252,7 @@ function Settings() {
       </div>
 
       {isAdmin && <IdentifierImportCard />}
+      {isAdmin && <PDTestImportCard />}
 
       <Card className="border-border/60">
         <CardHeader>
@@ -587,8 +590,186 @@ function Settings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {isAdmin && <DeathCauseSettings />}
+      {isAdmin && <MortalityThresholdSettings />}
     </div>
   );
 }
 
 export default Settings;
+
+
+function PDTestImportCard() {
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  const importing = React.useRef(false);
+  const fileInput = React.useRef(null);
+  const template = 'tag_number,test_date,result,months_pregnant,vet,notes\n';
+  const importFile = async () => {
+    if (!file || importing.current) return;
+    importing.current = true;
+    setBusy(true); setError(''); setResult(null);
+    try {
+      const { data } = await importPDTests(file);
+      setResult(data);
+      setFile(null);
+      if (fileInput.current) fileInput.current.value = '';
+      toast.success('PD test import complete');
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setError(typeof detail === 'string' ? detail : 'Failed to import PD tests. Please try again.');
+    } finally { importing.current = false; setBusy(false); }
+  };
+  return <Card>
+    <CardHeader><CardTitle>Bulk PD Test Import</CardTitle>
+      <CardDescription>Import pregnancy diagnosis results for active animals by tag number.</CardDescription></CardHeader>
+    <CardContent className="space-y-4">
+      <a className="text-sm text-primary underline" download="pd-tests-template.csv"
+        href={`data:text/csv;charset=utf-8,${encodeURIComponent(template)}`}>Download template</a>
+      <p className="overflow-x-auto font-mono text-xs">tag_number,test_date,result,months_pregnant,vet,notes</p>
+      <p className="text-sm text-muted-foreground">Use YYYY-MM-DD dates. Results: pregnant / yes / p, open / no / negative / n, or recheck / r / check. Months pregnant, vet, and notes may be blank. Each row creates a new event; repeated imports create additional events.</p>
+      <Label htmlFor="pd-tests-csv">PD results CSV</Label>
+      <Input ref={fileInput} id="pd-tests-csv" type="file" accept=".csv,text/csv" disabled={busy}
+        onChange={(event) => {
+          const picked = event.target.files?.[0];
+          setError(''); setResult(null);
+          if (picked && !picked.name.toLowerCase().endsWith('.csv')) {
+            setFile(null); setError('Choose a CSV file'); event.target.value = ''; return;
+          }
+          setFile(picked || null);
+        }} />
+      <Button onClick={importFile} disabled={busy || !file}>{busy ? 'Importing…' : 'Import'}</Button>
+      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {result && <div role="status" className="space-y-3 rounded-lg border p-4">
+        <p>{result.matched} animals updated · {result.events_created} events created</p>
+        <p className="text-sm text-muted-foreground">{result.total_rows} rows processed</p>
+        {result.not_found.length > 0 && <details>
+          <summary className="cursor-pointer">{result.not_found.length} not found</summary>
+          <ul className="mt-2 max-h-60 list-disc overflow-auto pl-5 font-mono text-sm">{result.not_found.map((tag, index) => <li key={index}>{tag}</li>)}</ul>
+        </details>}
+        {result.skipped.length > 0 && <details>
+          <summary className="cursor-pointer">{result.skipped.length} rows skipped (missing required fields)</summary>
+          <ul className="mt-2 max-h-60 list-disc overflow-auto pl-5 text-sm">{result.skipped.map((row, index) => <li key={index}>{row}</li>)}</ul>
+        </details>}
+      </div>}
+    </CardContent>
+  </Card>;
+}
+
+function mortalitySettingsError(error) {
+  const detail = error.response?.data?.detail;
+  return typeof detail === 'string' ? detail : 'Could not save mortality settings. Please try again.';
+}
+
+function DeathCauseSettings() {
+  const [causes, setCauses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [editor, setEditor] = useState(null);
+  const saving = React.useRef(false);
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError('');
+    Promise.all([listDeathCauses(), listDeathCauses({ is_active: false })])
+      .then(([enabled, disabled]) => { if (active) setCauses([...enabled.data, ...disabled.data]); })
+      .catch(() => { if (active) setError('Could not load causes. Please retry.'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [refresh]);
+
+  async function mutate(action) {
+    if (saving.current) return;
+    saving.current = true; setBusy(true); setError('');
+    try {
+      await action();
+      setEditor(null); setRefresh((value) => value + 1);
+      toast.success('Death causes updated');
+    } catch (err) { setError(mortalitySettingsError(err)); }
+    finally { saving.current = false; setBusy(false); }
+  }
+  const inactive = causes.filter((item) => !item.is_active);
+  const renderCause = (item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 border-b py-3 last:border-0">
+    <div className="min-w-0"><p className="break-words font-medium">{item.name}</p>{item.description && <p className="text-sm text-muted-foreground">{item.description}</p>}</div>
+    <div className="flex gap-2">
+      <Button variant="ghost" size="icon" aria-label={`Edit ${item.name}`} disabled={busy || !!editor} onClick={() => { setError(''); setEditor({ id: item.id, name: item.name, description: item.description || '' }); }}><PencilSimple className="h-4 w-4" /></Button>
+      {item.is_active ? <Button variant="outline" size="sm" disabled={busy || !!editor} onClick={() => mutate(() => deleteDeathCause(item.id))}>Deactivate</Button> :
+        <Button variant="outline" size="sm" disabled={busy || !!editor} onClick={() => mutate(() => updateDeathCause(item.id, { is_active: true }))}>Reactivate</Button>}
+    </div>
+  </li>;
+  return <Card><CardHeader><CardTitle>Cause of Death</CardTitle><CardDescription>Manage structured causes available when recording deaths. Deactivation preserves historical records.</CardDescription></CardHeader>
+    <CardContent className="space-y-4">
+      {error && <div role="alert" className="text-sm text-red-700">{error} <Button variant="ghost" size="sm" disabled={busy || loading} onClick={() => setRefresh((value) => value + 1)}>Retry loading</Button></div>}
+      {loading ? <p role="status">Loading causes…</p> : <>
+        <ul>{causes.filter((item) => item.is_active).map(renderCause)}</ul>
+        {!causes.some((item) => item.is_active) && <p className="text-sm text-muted-foreground">No active causes.</p>}
+        {!editor && <Button variant="outline" disabled={busy} onClick={() => { setError(''); setEditor({ id: null, name: '', description: '' }); }}>+ Add cause</Button>}
+        {editor && <form className="space-y-3 rounded-lg border p-4" onSubmit={(event) => {
+          event.preventDefault();
+          const name = editor.name.trim();
+          if (!name) { setError('Enter a cause name.'); return; }
+          const data = { name, description: editor.description.trim() || null };
+          mutate(() => editor.id == null ? createDeathCause(data) : updateDeathCause(editor.id, data));
+        }}>
+          <Label htmlFor="death-cause-name">{editor.id == null ? 'New cause' : 'Edit cause'}</Label>
+          <Input id="death-cause-name" required maxLength={100} disabled={busy} value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} />
+          <Label htmlFor="death-cause-description">Description (optional)</Label>
+          <Input id="death-cause-description" disabled={busy} value={editor.description} onChange={(event) => setEditor({ ...editor, description: event.target.value })} />
+          <div className="flex gap-2"><Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save cause'}</Button><Button type="button" variant="ghost" disabled={busy} onClick={() => { setEditor(null); setError(''); }}>Cancel</Button></div>
+        </form>}
+        {inactive.length > 0 && <details><summary className="cursor-pointer text-sm">Show inactive ({inactive.length})</summary><ul>{inactive.map(renderCause)}</ul></details>}
+      </>}
+    </CardContent>
+  </Card>;
+}
+
+function MortalityThresholdSettings() {
+  const [values, setValues] = useState({ cattle: '', sheep: '', goat: '' });
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [refresh, setRefresh] = useState(0);
+  const saving = React.useRef(false);
+  const toValues = (rows) => Object.fromEntries(['cattle', 'sheep', 'goat'].map((key) => [key, String(rows.find((row) => row.species === key)?.threshold ?? '')]));
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setLoaded(false); setError('');
+    getMortalityThresholds().then(({ data }) => {
+      if (active) {
+        setValues(Object.fromEntries(['cattle', 'sheep', 'goat'].map((key) => [key, String(data.find((row) => row.species === key)?.threshold ?? '')])));
+        setLoaded(true);
+      }
+    }).catch(() => { if (active) setError('Could not load thresholds. Please retry.'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [refresh]);
+
+  async function save(event) {
+    event.preventDefault();
+    if (saving.current || !loaded) return;
+    const data = Object.entries(values).filter(([, value]) => value !== '').map(([species, threshold]) => ({ species, threshold }));
+    if (!data.length) { setError('Enter at least one threshold.'); return; }
+    saving.current = true; setBusy(true); setError('');
+    try {
+      const response = await updateMortalityThresholds(data);
+      setValues(toValues(response.data)); toast.success('Mortality thresholds saved');
+    } catch (err) { setError(mortalitySettingsError(err)); }
+    finally { saving.current = false; setBusy(false); }
+  }
+  return <Card><CardHeader><CardTitle>Mortality Alert Thresholds</CardTitle><CardDescription>Alerts appear when a mortality rate exceeds its species threshold.</CardDescription></CardHeader>
+    <CardContent><form onSubmit={save} className="space-y-4">
+      {error && <div role="alert" className="text-sm text-red-700">{error}{!loaded && <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => setRefresh((value) => value + 1)}>Retry</Button>}</div>}
+      {loading && <p role="status">Loading thresholds…</p>}
+      <fieldset disabled={loading || busy || !loaded} className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-3">{[['cattle', 'Cattle'], ['sheep', 'Sheep'], ['goat', 'Goats']].map(([key, label]) =>
+          <div key={key}><Label htmlFor={`mortality-${key}`}>{label}</Label><div className="mt-1 flex items-center gap-2"><Input id={`mortality-${key}`} type="number" min="0" max="999.99" step="0.01" placeholder="Not set" value={values[key]} onChange={(event) => setValues({ ...values, [key]: event.target.value })} /><span>%</span></div></div>)}</div>
+        <p className="text-sm text-muted-foreground">Leave a field blank to keep its current setting. Species without a threshold do not trigger alerts.</p>
+        <Button type="submit">{busy ? 'Saving…' : 'Save thresholds'}</Button>
+      </fieldset>
+    </form></CardContent>
+  </Card>;
+}
