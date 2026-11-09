@@ -1651,15 +1651,16 @@ async def update_event(
         EventType.SOLD:     {"buyer_name", "buyer_phone", "buyer_address", "sale_price"},
         EventType.GIFT_IN:  {"gift_party_name", "gift_party_phone", "gift_reason"},
         EventType.GIFT_OUT: {"gift_party_name", "gift_party_phone", "gift_reason"},
+        EventType.ABORTION: {"abortion_stage", "mother_tag"},
     }
     _all_typed = {f for fields in _type_fields.values() for f in fields}
-    _allowed   = _type_fields.get(event.event_type, set())
+    _allowed   = _type_fields.get(effective_type, set())
     _sent      = {k for k, v in data.model_dump(exclude_none=True).items() if k in _all_typed}
     _rejected  = _sent - _allowed
     if _rejected:
         raise HTTPException(
             status_code=400,
-            detail=f"Fields not applicable to {event.event_type.value} event: {', '.join(sorted(_rejected))}"
+            detail=f"Fields not applicable to {effective_type.value} event: {', '.join(sorted(_rejected))}"
         )
 
     # Undo the OLD event's animal-register effects (best-effort, own commit, before any stock change)
@@ -1682,6 +1683,13 @@ async def update_event(
             is_stock_event=True
         )
         await reverse_event_stock(db, location_id, old_event_data)
+
+    # Changing the event type drops the old type's specific fields and resets the stock flag
+    # (only ABORTION is a non-stock event), mirroring how the create form sets it.
+    if data.event_type is not None and data.event_type != event.event_type:
+        for _field in _all_typed - _type_fields.get(effective_type, set()):
+            setattr(event, _field, None)
+        event.is_stock_event = effective_type != EventType.ABORTION
 
     # Update event fields
     if "cause_of_death_id" in data.model_fields_set:
@@ -1718,6 +1726,8 @@ async def update_event(
         event.attending_vet = data.attending_vet
     if data.mother_tag is not None:
         event.mother_tag = data.mother_tag
+    if data.abortion_stage is not None:
+        event.abortion_stage = data.abortion_stage
     if data.offspring_tags is not None:
         event.offspring_tags = data.offspring_tags
     if data.buyer_name is not None:
@@ -1773,8 +1783,10 @@ async def update_event(
         animal_tags=event.animal_tags,
         cause_of_death_id=event.cause_of_death_id,
         cause_of_death=event.cause_of_death,
+        disease_id=event.disease_id,
         days_sick=event.days_sick,
         attending_vet=event.attending_vet,
+        abortion_stage=event.abortion_stage,
         mother_tag=event.mother_tag,
         offspring_tags=event.offspring_tags,
         buyer_name=event.buyer_name,

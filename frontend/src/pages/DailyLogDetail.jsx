@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getDailyLog, lockDailyLog, createEvent, updateEvent, deleteEvent, getCategories, getLocations, updateDailyLog, getDiseases } from '../lib/api';
+import { getDailyLog, lockDailyLog, createEvent, updateEvent, deleteEvent, getCategories, getLocations, updateDailyLog, getDiseases, listDeathCauses } from '../lib/api';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -20,21 +20,7 @@ import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { EVENT_TYPES, SPECIES_CONFIG, formatDate, formatDateTime } from '../lib/utils';
 import { format } from 'date-fns';
-
-const EVENT_TYPE_OPTIONS = [
-  { value: 'birth', label: 'Birth' },
-  { value: 'death', label: 'Death' },
-  { value: 'sold', label: 'Sold' },
-  { value: 'missing', label: 'Missing' },
-  { value: 'gift_in', label: 'Gift In' },
-  { value: 'gift_out', label: 'Gift Out' },
-  { value: 'bought', label: 'Bought' },
-  { value: 'transfer', label: 'Transfer' },
-  { value: 'category_change', label: 'Category Change' },
-  { value: 'abortion', label: 'Abortion (Note)' },
-];
-
-const NO_DISEASE_VALUE = 'none';
+import { EventFormItem, blankEvent, applyEventChange, eventFromApi, validateEvent, eventToCreatePayload, eventToUpdatePayload } from '../components/EventForm';
 
 const DailyLogDetail = () => {
   const { id } = useParams();
@@ -49,12 +35,10 @@ const DailyLogDetail = () => {
   // Detail sheet state
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
-  const [sheetMode, setSheetMode] = useState('view'); // 'view' | 'edit'
-  const [detailEditForm, setDetailEditForm] = useState({});
-  const [detailSaving, setDetailSaving] = useState(false);
 
   // Diseases for DEATH edit select
   const [diseases, setDiseases] = useState([]);
+  const [deathCauses, setDeathCauses] = useState([]);
 
   // Edit event dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -68,18 +52,7 @@ const DailyLogDetail = () => {
 
   // Add event dialog state
   const [addEventDialogOpen, setAddEventDialogOpen] = useState(false);
-  const [addEventForm, setAddEventForm] = useState({
-    event_type: 'birth',
-    species: 'cattle',
-    category_id: '',
-    count: 0,
-    from_location_id: '',
-    to_location_id: '',
-    from_category_id: '',
-    to_category_id: '',
-    notes: '',
-    is_stock_event: true,
-  });
+  const [addEventForm, setAddEventForm] = useState(blankEvent());
   const [addingEvent, setAddingEvent] = useState(false);
 
   // Edit log dialog state
@@ -118,6 +91,13 @@ const DailyLogDetail = () => {
     } catch (error) {
       console.error('Failed to load categories');
     }
+    try {
+      // Inactive causes are included so an old event keeps showing its cause while it is edited
+      const [active, inactive] = await Promise.all([listDeathCauses(), listDeathCauses({ is_active: false })]);
+      setDeathCauses([...active.data, ...inactive.data]);
+    } catch (error) {
+      // Cause list is optional: deaths can still be saved without a structured cause
+    }
   }, []);
 
   useEffect(() => {
@@ -140,37 +120,19 @@ const DailyLogDetail = () => {
 
   const openEditDialog = (event) => {
     setEditingEvent(event);
-    setEditForm({
-      event_type: event.event_type,
-      species: event.species,
-      category_id: event.category_id?.toString() || '',
-      count: event.count,
-      from_location_id: event.from_location_id?.toString() || '',
-      to_location_id: event.to_location_id?.toString() || '',
-      from_category_id: event.from_category_id?.toString() || '',
-      to_category_id: event.to_category_id?.toString() || '',
-      notes: event.notes || ''
-    });
+    setEditForm(eventFromApi(event));
     setEditDialogOpen(true);
   };
 
   const handleEditSubmit = async () => {
+    const problem = validateEvent(editForm);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
     setSaving(true);
     try {
-      const payload = {
-        event_type: editForm.event_type,
-        species: editForm.species,
-        count: parseInt(editForm.count) || 0,
-        notes: editForm.notes || null
-      };
-
-      if (editForm.category_id) payload.category_id = parseInt(editForm.category_id);
-      if (editForm.from_location_id) payload.from_location_id = parseInt(editForm.from_location_id);
-      if (editForm.to_location_id) payload.to_location_id = parseInt(editForm.to_location_id);
-      if (editForm.from_category_id) payload.from_category_id = parseInt(editForm.from_category_id);
-      if (editForm.to_category_id) payload.to_category_id = parseInt(editForm.to_category_id);
-
-      await updateEvent(editingEvent.id, payload);
+      await updateEvent(editingEvent.id, eventToUpdatePayload(editForm));
       toast.success('Event updated successfully');
       setEditDialogOpen(false);
       loadLog();
@@ -233,38 +195,19 @@ const DailyLogDetail = () => {
   };
 
   const openAddEventDialog = () => {
-    setAddEventForm({
-      event_type: 'birth',
-      species: 'cattle',
-      category_id: '',
-      count: 0,
-      from_location_id: '',
-      to_location_id: '',
-      from_category_id: '',
-      to_category_id: '',
-      notes: '',
-      is_stock_event: true,
-    });
+    setAddEventForm(blankEvent());
     setAddEventDialogOpen(true);
   };
 
   const handleAddEventSubmit = async () => {
+    const problem = validateEvent(addEventForm);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
     setAddingEvent(true);
     try {
-      const payload = {
-        event_type: addEventForm.event_type,
-        species: addEventForm.species,
-        count: parseInt(addEventForm.count) || 0,
-        notes: addEventForm.notes || null,
-        is_stock_event: addEventForm.is_stock_event,
-      };
-      if (addEventForm.category_id) payload.category_id = parseInt(addEventForm.category_id);
-      if (addEventForm.from_location_id) payload.from_location_id = parseInt(addEventForm.from_location_id);
-      if (addEventForm.to_location_id) payload.to_location_id = parseInt(addEventForm.to_location_id);
-      if (addEventForm.from_category_id) payload.from_category_id = parseInt(addEventForm.from_category_id);
-      if (addEventForm.to_category_id) payload.to_category_id = parseInt(addEventForm.to_category_id);
-
-      await createEvent(id, payload);
+      await createEvent(id, eventToCreatePayload(addEventForm));
       toast.success('Event added successfully');
       setAddEventDialogOpen(false);
       loadLog();
@@ -287,65 +230,7 @@ const DailyLogDetail = () => {
 
   const openDetailSheet = (event) => {
     setSelectedEvent(event);
-    setSheetMode('view');
-    setDetailEditForm({
-      cause_of_death: event.cause_of_death || '',
-      disease_id: event.disease_id?.toString() || '',
-      days_sick: event.days_sick?.toString() || '',
-      attending_vet: event.attending_vet || '',
-      mother_tag: event.mother_tag || '',
-      offspring_tags: event.offspring_tags || '',
-      buyer_name: event.buyer_name || '',
-      buyer_phone: event.buyer_phone || '',
-      buyer_address: event.buyer_address || '',
-      sale_price: event.sale_price?.toString() || '',
-      gift_party_name: event.gift_party_name || '',
-      gift_party_phone: event.gift_party_phone || '',
-      gift_reason: event.gift_reason || '',
-      animal_tags: event.animal_tags || '',
-      notes: event.notes || '',
-    });
     setDetailSheetOpen(true);
-  };
-
-  const handleDetailSave = async () => {
-    setDetailSaving(true);
-    try {
-      const et = selectedEvent.event_type;
-      const payload = {};
-
-      if (detailEditForm.notes) payload.notes = detailEditForm.notes;
-      if (detailEditForm.animal_tags) payload.animal_tags = detailEditForm.animal_tags;
-
-      if (et === 'death') {
-        if (detailEditForm.cause_of_death) payload.cause_of_death = detailEditForm.cause_of_death;
-        if (detailEditForm.disease_id) payload.disease_id = parseInt(detailEditForm.disease_id);
-        if (detailEditForm.days_sick) payload.days_sick = parseInt(detailEditForm.days_sick);
-        if (detailEditForm.attending_vet) payload.attending_vet = detailEditForm.attending_vet;
-      } else if (et === 'birth') {
-        if (detailEditForm.mother_tag) payload.mother_tag = detailEditForm.mother_tag;
-        if (detailEditForm.offspring_tags) payload.offspring_tags = detailEditForm.offspring_tags;
-      } else if (et === 'sold') {
-        if (detailEditForm.buyer_name) payload.buyer_name = detailEditForm.buyer_name;
-        if (detailEditForm.buyer_phone) payload.buyer_phone = detailEditForm.buyer_phone;
-        if (detailEditForm.buyer_address) payload.buyer_address = detailEditForm.buyer_address;
-        if (detailEditForm.sale_price) payload.sale_price = parseInt(detailEditForm.sale_price);
-      } else if (et === 'gift_in' || et === 'gift_out') {
-        if (detailEditForm.gift_party_name) payload.gift_party_name = detailEditForm.gift_party_name;
-        if (detailEditForm.gift_party_phone) payload.gift_party_phone = detailEditForm.gift_party_phone;
-        if (detailEditForm.gift_reason) payload.gift_reason = detailEditForm.gift_reason;
-      }
-
-      await updateEvent(selectedEvent.id, payload);
-      toast.success('Event updated');
-      setDetailSheetOpen(false);
-      setSheetMode('view');
-      loadLog();
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to update event');
-    } finally {
-      setDetailSaving(false);
-    }
   };
 
   if (loading) {
@@ -595,15 +480,14 @@ const DailyLogDetail = () => {
       {/* ===== Event Detail / Edit Sheet ===== */}
       <Sheet
         open={detailSheetOpen}
-        onOpenChange={(open) => { setDetailSheetOpen(open); if (!open) setSheetMode('view'); }}
+        onOpenChange={setDetailSheetOpen}
       >
         <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
           {selectedEvent && (() => {
             const eventConfig = EVENT_TYPES[selectedEvent.event_type];
             const speciesConfig = SPECIES_CONFIG[selectedEvent.species];
             const et = selectedEvent.event_type;
-            const typeSpecificTypes = ['death', 'birth', 'sold', 'gift_in', 'gift_out'];
-            const canEditInSheet = isDataEntry && typeSpecificTypes.includes(et);
+            const canEditInSheet = isDataEntry;
             const isLocked = log?.is_locked;
             return (
               <>
@@ -643,8 +527,6 @@ const DailyLogDetail = () => {
                   </div>
                 </div>
 
-                {sheetMode === 'view' ? (
-                  /* ---- READ-ONLY VIEW ---- */
                   <div className="space-y-3">
                     {et === 'death' && (
                       <>
@@ -704,158 +586,11 @@ const DailyLogDetail = () => {
                       </>
                     )}
                   </div>
-                ) : (
-                  /* ---- EDIT FORM ---- */
-                  <div className="space-y-3">
-                    {et === 'death' && (
-                      <>
-                        <div className="space-y-1">
-                          <Label>Cause of Death</Label>
-                          <Input
-                            value={detailEditForm.cause_of_death}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, cause_of_death: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Disease</Label>
-                          <Select
-                            value={detailEditForm.disease_id || NO_DISEASE_VALUE}
-                            onValueChange={v => setDetailEditForm({
-                              ...detailEditForm,
-                              disease_id: v === NO_DISEASE_VALUE ? '' : v
-                            })}
-                          >
-                            <SelectTrigger><SelectValue placeholder="Select disease" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={NO_DISEASE_VALUE}>None</SelectItem>
-                              {diseases.map(d => (
-                                <SelectItem key={d.id} value={d.id.toString()}>{d.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Days Sick</Label>
-                          <Input
-                            type="number" min="0"
-                            value={detailEditForm.days_sick}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, days_sick: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Attending Vet</Label>
-                          <Input
-                            value={detailEditForm.attending_vet}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, attending_vet: e.target.value })}
-                          />
-                        </div>
-                      </>
-                    )}
-                    {et === 'birth' && (
-                      <>
-                        <div className="space-y-1">
-                          <Label>Mother Tag (Dam)</Label>
-                          <Input
-                            value={detailEditForm.mother_tag || ''}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, mother_tag: e.target.value })}
-                            placeholder="Mother (dam) tag"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Offspring Tags</Label>
-                          <Textarea
-                            rows={2}
-                            value={detailEditForm.offspring_tags}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, offspring_tags: e.target.value })}
-                            placeholder="Comma-separated tags"
-                          />
-                        </div>
-                      </>
-                    )}
-                    {et === 'sold' && (
-                      <>
-                        <div className="space-y-1">
-                          <Label>Buyer Name</Label>
-                          <Input
-                            value={detailEditForm.buyer_name}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, buyer_name: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Buyer Phone</Label>
-                          <Input
-                            value={detailEditForm.buyer_phone}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, buyer_phone: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Buyer Address</Label>
-                          <Textarea
-                            rows={2}
-                            value={detailEditForm.buyer_address}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, buyer_address: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Sale Price (TZS)</Label>
-                          <Input
-                            type="number" min="0"
-                            value={detailEditForm.sale_price}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, sale_price: e.target.value })}
-                          />
-                        </div>
-                      </>
-                    )}
-                    {(et === 'gift_in' || et === 'gift_out') && (
-                      <>
-                        <div className="space-y-1">
-                          <Label>{et === 'gift_in' ? 'Giver Name' : 'Recipient Name'}</Label>
-                          <Input
-                            value={detailEditForm.gift_party_name}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, gift_party_name: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Phone</Label>
-                          <Input
-                            value={detailEditForm.gift_party_phone}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, gift_party_phone: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label>Reason</Label>
-                          <Textarea
-                            rows={2}
-                            value={detailEditForm.gift_reason}
-                            onChange={e => setDetailEditForm({ ...detailEditForm, gift_reason: e.target.value })}
-                          />
-                        </div>
-                      </>
-                    )}
-                    <div className="space-y-1">
-                      <Label>Animal Tags</Label>
-                      <Textarea
-                        rows={2}
-                        value={detailEditForm.animal_tags}
-                        onChange={e => setDetailEditForm({ ...detailEditForm, animal_tags: e.target.value })}
-                        placeholder="Comma-separated tags"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Notes</Label>
-                      <Textarea
-                        rows={2}
-                        value={detailEditForm.notes}
-                        onChange={e => setDetailEditForm({ ...detailEditForm, notes: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                )}
 
                 {/* Sheet footer */}
                 <div className="flex items-center justify-between mt-6 pt-4 border-t gap-2">
                   <div>
-                    {sheetMode === 'view' && canEditInSheet && (
+                    {canEditInSheet && (
                       isLocked && !isAdmin ? (
                         <TooltipProvider>
                           <Tooltip>
@@ -875,28 +610,11 @@ const DailyLogDetail = () => {
                               Editing a locked log
                             </Badge>
                           )}
-                          <Button size="sm" onClick={() => setSheetMode('edit')}>
+                          <Button size="sm" onClick={() => { setDetailSheetOpen(false); openEditDialog(selectedEvent); }}>
                             Edit
                           </Button>
                         </div>
                       )
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {sheetMode === 'edit' && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSheetMode('view')}
-                          disabled={detailSaving}
-                        >
-                          Cancel
-                        </Button>
-                        <Button size="sm" onClick={handleDetailSave} disabled={detailSaving}>
-                          {detailSaving ? 'Saving...' : 'Save'}
-                        </Button>
-                      </>
                     )}
                   </div>
                 </div>
@@ -908,171 +626,29 @@ const DailyLogDetail = () => {
 
       {/* Add Event Dialog */}
       <Dialog open={addEventDialogOpen} onOpenChange={setAddEventDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-heading">Add Event</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Event Type</Label>
-                <Select
-                  value={addEventForm.event_type}
-                  onValueChange={(v) => setAddEventForm({ ...addEventForm, event_type: v })}
-                >
-                  <SelectTrigger data-testid="add-event-type">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EVENT_TYPE_OPTIONS.map(opt => (
-                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Species</Label>
-                <Select
-                  value={addEventForm.species}
-                  onValueChange={(v) => setAddEventForm({ ...addEventForm, species: v, category_id: '', from_category_id: '', to_category_id: '' })}
-                >
-                  <SelectTrigger data-testid="add-species">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(SPECIES_CONFIG).map(([key, config]) => (
-                      <SelectItem key={key} value={key}>{config.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Count</Label>
-              <Input
-                type="number"
-                min="0"
-                value={addEventForm.count}
-                onChange={(e) => setAddEventForm({ ...addEventForm, count: e.target.value })}
-                data-testid="add-count"
-              />
-            </div>
-
-            {addEventForm.event_type !== 'category_change' && addEventForm.event_type !== 'abortion' && (
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <Select
-                  value={addEventForm.category_id}
-                  onValueChange={(v) => setAddEventForm({ ...addEventForm, category_id: v })}
-                >
-                  <SelectTrigger data-testid="add-category">
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {addSpeciesCategories.map(cat => (
-                      <SelectItem key={cat.id} value={cat.id.toString()}>
-                        {cat.name_sw} ({cat.name_en})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {addEventForm.event_type === 'transfer' && (
-              <div className="grid grid-cols-2 gap-4 p-3 bg-orange-50 rounded-lg">
-                <div className="space-y-2">
-                  <Label>From Location</Label>
-                  <Select
-                    value={addEventForm.from_location_id}
-                    onValueChange={(v) => setAddEventForm({ ...addEventForm, from_location_id: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {locations.map(loc => (
-                        <SelectItem key={loc.id} value={loc.id.toString()}>{loc.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>To Location</Label>
-                  <Select
-                    value={addEventForm.to_location_id}
-                    onValueChange={(v) => setAddEventForm({ ...addEventForm, to_location_id: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Destination" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {locations.map(loc => (
-                        <SelectItem key={loc.id} value={loc.id.toString()}>{loc.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-
-            {addEventForm.event_type === 'category_change' && (
-              <div className="grid grid-cols-2 gap-4 p-3 bg-indigo-50 rounded-lg">
-                <div className="space-y-2">
-                  <Label>From Category</Label>
-                  <Select
-                    value={addEventForm.from_category_id}
-                    onValueChange={(v) => setAddEventForm({ ...addEventForm, from_category_id: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {addSpeciesCategories.map(cat => (
-                        <SelectItem key={cat.id} value={cat.id.toString()}>{cat.name_sw}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>To Category</Label>
-                  <Select
-                    value={addEventForm.to_category_id}
-                    onValueChange={(v) => setAddEventForm({ ...addEventForm, to_category_id: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Destination" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {addSpeciesCategories.map(cat => (
-                        <SelectItem key={cat.id} value={cat.id.toString()}>{cat.name_sw}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label>Notes</Label>
-              <Input
-                value={addEventForm.notes}
-                onChange={(e) => setAddEventForm({ ...addEventForm, notes: e.target.value })}
-                placeholder="Optional notes"
-                data-testid="add-notes"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={() => setAddEventDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleAddEventSubmit} disabled={addingEvent} data-testid="save-add-event-btn">
-                {addingEvent ? 'Adding...' : 'Add Event'}
-              </Button>
-            </div>
+          <EventFormItem
+            event={addEventForm}
+            index={0}
+            categories={categories}
+            locations={locations}
+            diseases={diseases}
+            deathCauses={deathCauses}
+            locationId={log.location_id}
+            logDate={new Date(log.log_date + 'T00:00:00')}
+            onUpdate={(i, field, value) => setAddEventForm((prev) => applyEventChange(prev, field, value))}
+            onPatch={(i, patch) => setAddEventForm((prev) => ({ ...prev, ...patch }))}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setAddEventDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddEventSubmit} disabled={addingEvent} data-testid="save-add-event-btn">
+              {addingEvent ? 'Adding...' : 'Add Event'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -1155,171 +731,30 @@ const DailyLogDetail = () => {
 
       {/* Edit Event Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-heading">Edit Event</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Event Type</Label>
-                <Select 
-                  value={editForm.event_type} 
-                  onValueChange={(v) => setEditForm({ ...editForm, event_type: v })}
-                >
-                  <SelectTrigger data-testid="edit-event-type">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EVENT_TYPE_OPTIONS.map(opt => (
-                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Species</Label>
-                <Select 
-                  value={editForm.species} 
-                  onValueChange={(v) => setEditForm({ ...editForm, species: v, category_id: '', from_category_id: '', to_category_id: '' })}
-                >
-                  <SelectTrigger data-testid="edit-species">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(SPECIES_CONFIG).map(([key, config]) => (
-                      <SelectItem key={key} value={key}>{config.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Count</Label>
-              <Input
-                type="number"
-                min="0"
-                value={editForm.count}
-                onChange={(e) => setEditForm({ ...editForm, count: e.target.value })}
-                data-testid="edit-count"
-              />
-            </div>
-
-            {editForm.event_type !== 'category_change' && editForm.event_type !== 'abortion' && (
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <Select 
-                  value={editForm.category_id} 
-                  onValueChange={(v) => setEditForm({ ...editForm, category_id: v })}
-                >
-                  <SelectTrigger data-testid="edit-category">
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {speciesCategories.map(cat => (
-                      <SelectItem key={cat.id} value={cat.id.toString()}>
-                        {cat.name_sw} ({cat.name_en})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {editForm.event_type === 'transfer' && (
-              <div className="grid grid-cols-2 gap-4 p-3 bg-orange-50 rounded-lg">
-                <div className="space-y-2">
-                  <Label>From Location</Label>
-                  <Select 
-                    value={editForm.from_location_id} 
-                    onValueChange={(v) => setEditForm({ ...editForm, from_location_id: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {locations.map(loc => (
-                        <SelectItem key={loc.id} value={loc.id.toString()}>{loc.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>To Location</Label>
-                  <Select 
-                    value={editForm.to_location_id} 
-                    onValueChange={(v) => setEditForm({ ...editForm, to_location_id: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Destination" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {locations.map(loc => (
-                        <SelectItem key={loc.id} value={loc.id.toString()}>{loc.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-
-            {editForm.event_type === 'category_change' && (
-              <div className="grid grid-cols-2 gap-4 p-3 bg-indigo-50 rounded-lg">
-                <div className="space-y-2">
-                  <Label>From Category</Label>
-                  <Select 
-                    value={editForm.from_category_id} 
-                    onValueChange={(v) => setEditForm({ ...editForm, from_category_id: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {speciesCategories.map(cat => (
-                        <SelectItem key={cat.id} value={cat.id.toString()}>{cat.name_sw}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>To Category</Label>
-                  <Select 
-                    value={editForm.to_category_id} 
-                    onValueChange={(v) => setEditForm({ ...editForm, to_category_id: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Destination" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {speciesCategories.map(cat => (
-                        <SelectItem key={cat.id} value={cat.id.toString()}>{cat.name_sw}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label>Notes</Label>
-              <Input
-                value={editForm.notes}
-                onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
-                placeholder="Optional notes"
-                data-testid="edit-notes"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleEditSubmit} disabled={saving} data-testid="save-edit-btn">
-                {saving ? 'Saving...' : 'Save Changes'}
-              </Button>
-            </div>
+          <EventFormItem
+            mode="edit"
+            event={editForm}
+            index={0}
+            categories={categories}
+            locations={locations}
+            diseases={diseases}
+            deathCauses={deathCauses}
+            locationId={log.location_id}
+            logDate={new Date(log.log_date + 'T00:00:00')}
+            onUpdate={(i, field, value) => setEditForm((prev) => applyEventChange(prev, field, value))}
+            onPatch={(i, patch) => setEditForm((prev) => ({ ...prev, ...patch }))}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleEditSubmit} disabled={saving} data-testid="save-edit-btn">
+              {saving ? 'Saving...' : 'Save Changes'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

@@ -19,7 +19,8 @@ export function parseTags(value) {
  * comma-separated tag string, so it drops in wherever a free-text tag input was used.
  *
  * Props: locationId, species, categoryId (optional, client-side filter), sex (optional,
- * client-side filter), value, onChange(string), placeholder, maxSelect (optional), testId.
+ * client-side filter), value, onChange(string), placeholder, maxSelect (optional), testId,
+ * status (default 'active'; pass null to list animals of every status, e.g. when editing a past event).
  * If the animals fetch fails it falls back to a plain text input so events can still be saved.
  */
 function AnimalTagPicker({
@@ -32,6 +33,7 @@ function AnimalTagPicker({
   placeholder = 'Search animals by tag or name...',
   maxSelect,
   testId,
+  status = 'active',
 }) {
   const [animals, setAnimals] = useState(null); // null while loading
   const [failed, setFailed] = useState(false);
@@ -46,11 +48,11 @@ function AnimalTagPicker({
     let cancelled = false;
     setAnimals(null);
     setFailed(false);
-    searchAnimals({ location_id: locationId, species: species, status: 'active' })
+    searchAnimals({ location_id: locationId, species: species, ...(status ? { status: status } : {}) })
       .then(function (res) { if (!cancelled) setAnimals(res.data); })
       .catch(function () { if (!cancelled) setFailed(true); });
     return function () { cancelled = true; };
-  }, [locationId, species]);
+  }, [locationId, species, status]);
 
   const selected = parseTags(value);
 

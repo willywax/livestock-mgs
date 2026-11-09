@@ -402,3 +402,46 @@ async def test_list_animals_temp_filter(client, db_session):
     assert [a["tag_number"] for a in only_temp] == ["TEMP-TES-20260101-001"]
     assert [a["tag_number"] for a in only_real] == ["REAL-2"]
     assert len(both) == 2
+
+
+async def test_edit_abortion_event_stage_and_mother_tag(client, db_session):
+    log, koo = await _setup(db_session)
+    ev = (await post_event(client, log, event_type="abortion", species="cattle", count=1,
+                           is_stock_event=False, abortion_stage="early")).json()
+    r = await client.put(f"/api/events/{ev['id']}", json={"abortion_stage": "late", "mother_tag": "M-1"},
+                         headers=auth("admin"))
+    assert r.status_code == 200, r.text
+    assert (r.json()["abortion_stage"], r.json()["mother_tag"]) == ("late", "M-1")
+
+
+async def test_edit_event_rejects_fields_of_another_type_and_can_clear_text(client, db_session):
+    log, koo = await _setup(db_session)
+    ev = (await post_event(client, log, event_type="sold", species="cattle", category_id=koo, count=1,
+                           buyer_name="Asha")).json()
+    bad = await client.put(f"/api/events/{ev['id']}", json={"abortion_stage": "early"}, headers=auth("admin"))
+    assert bad.status_code == 400
+    ok = await client.put(f"/api/events/{ev['id']}", json={"buyer_name": ""}, headers=auth("admin"))
+    assert ok.status_code == 200 and ok.json()["buyer_name"] == ""
+
+
+async def test_edit_event_type_change_clears_old_fields_and_fixes_stock(client, db_session):
+    log, koo = await _setup(db_session)
+    ev = (await post_event(client, log, event_type="sold", species="cattle", category_id=koo, count=2,
+                           buyer_name="Asha", sale_price=100)).json()
+    assert await api_stock(client, FARM_ID, koo) == 48
+    r = await client.put(f"/api/events/{ev['id']}",
+                         json={"event_type": "death", "cause_of_death": "Disease", "days_sick": 3},
+                         headers=auth("admin"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["event_type"] == "death" and body["buyer_name"] is None and body["sale_price"] is None
+    assert body["cause_of_death"] == "Disease" and body["days_sick"] == 3
+    assert await api_stock(client, FARM_ID, koo) == 48  # sold -2 reversed, death -2 applied
+    # Old-type fields sent with a type change are still rejected
+    bad = await client.put(f"/api/events/{ev['id']}", json={"event_type": "birth", "buyer_name": "X"},
+                           headers=auth("admin"))
+    assert bad.status_code == 400
+    # Changing to abortion makes it a non-stock event and restores stock
+    to_abortion = await client.put(f"/api/events/{ev['id']}", json={"event_type": "abortion"}, headers=auth("admin"))
+    assert to_abortion.status_code == 200 and to_abortion.json()["is_stock_event"] is False
+    assert await api_stock(client, FARM_ID, koo) == 50
