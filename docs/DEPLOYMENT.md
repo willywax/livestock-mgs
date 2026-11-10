@@ -1,4 +1,13 @@
 # Deployment
+## Verified release: 2026-11-10
+- Application commit `4506bf7` deployed from a clean Git archive to `elitagroup`, `us-central1`: reproductive status board, grouped sidebar, category transitions, and animal/form improvements.
+- Backend `shamba-backend-4506bf7` and frontend `srcstock-4506bf7` each serve 100% of traffic. Existing runtime environment and identity retained. Images use tag `4506bf7`.
+- Successful Cloud Builds: backend `551b1e3c-032a-4662-b8fb-64ce965c664b`, frontend `57989e29-1dc4-4b73-ad74-42a51c28966e`.
+- Production migration ran before service deployment via job execution `shamba-migrate-4506bf7-2bptq`, using the backend runtime identity and environment. Startup creates the two category-transition tables and enum, then seeds rules. Repeated startup passed: all 28 ORM tables readable, 15 transition rules, and unchanged row counts in animals, events, stock_levels, reproductive_events and categories. No historical transition backfill was run.
+- Local checks: 202 self-contained backend tests, 21 frontend tests, syntax lint, import/startup checks and production build passed (existing hook warnings only). PostgreSQL 16 upgrade from `816dac4` and repeated startup verified on an isolated local container, now stopped.
+- Live checks: `/reproduction/status` and its JavaScript asset returned HTTP 200. Bundle includes the board and transition queue. OpenAPI exposes status-board, transition queue and transition-rule endpoints; unauthenticated board access returns HTTP 403. Interactive login and authenticated browser workflows were not tested.
+- Rollback traffic targets: `shamba-backend-816dac4` and `srcstock-816dac4`. Use `gcloud run services update-traffic <service> --project elitagroup --region us-central1 --to-revisions <previous-revision>=100`. Leave the additive schema in place. Traffic rollback does not reverse category/stock transitions recorded after release.
+
 ## Verified release: 2026-11-09
 - Deployed application commit `816dac4` from a clean Git archive to existing project `elitagroup`, region `us-central1`.
 - Backend revision: `shamba-backend-816dac4`; frontend revision: `srcstock-816dac4`. Explicitly routed 100% of traffic to each new revision because the services retained traffic pins to `ff6314c` after deploy.
