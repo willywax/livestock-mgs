@@ -1,4 +1,4 @@
-import { applyEventChange, blankEvent, eventFromApi, eventToCreatePayload, eventToUpdatePayload } from './EventForm';
+import { applyEventChange, blankEvent, eventFromApi, eventToCreatePayload, eventToUpdatePayload, validateEvent } from './EventForm';
 
 jest.mock('../lib/api', () => ({ searchAnimals: jest.fn() }));
 
@@ -39,4 +39,24 @@ test('overriding the category by hand clears the auto-filled flag and it never r
   expect(next).toMatchObject({ category_id: '9', category_auto_filled: false });
   expect(eventToCreatePayload(auto)).not.toHaveProperty('category_auto_filled');
   expect(eventToUpdatePayload(auto)).not.toHaveProperty('category_auto_filled');
+});
+
+
+test('PD and service payloads are non-stock and do not require a category', () => {
+  const pd = { ...applyEventChange(blankEvent(), 'event_type', 'pd_test'), pd_result: 'pregnant', months_pregnant: '0' };
+  expect(validateEvent(pd)).toBeNull();
+  expect(eventToCreatePayload(pd)).toMatchObject({ is_stock_event: false, pd_result: 'pregnant', months_pregnant: 0 });
+  expect(eventToUpdatePayload(pd)).toMatchObject({ pd_result: 'pregnant', months_pregnant: 0 });
+  const open = applyEventChange(pd, 'pd_result', 'open');
+  expect(eventToUpdatePayload(open).months_pregnant).toBeNull();
+  const service = applyEventChange(pd, 'event_type', 'service');
+  expect(validateEvent(service)).toBeNull();
+  expect(eventToCreatePayload(service)).toMatchObject({ is_stock_event: false, pd_result: null, months_pregnant: null });
+});
+
+test('PD result is required and rejects invalid pregnancy months', () => {
+  const pd = applyEventChange(blankEvent(), 'event_type', 'pd_test');
+  expect(validateEvent(pd)).toContain('PD result');
+  expect(validateEvent({ ...pd, pd_result: 'pregnant', months_pregnant: '-1' })).toContain('whole number');
+  expect(validateEvent({ ...pd, pd_result: 'pregnant', months_pregnant: '2.5' })).toContain('whole number');
 });

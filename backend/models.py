@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Date, Float, JSON, Numeric, Enum as SQLEnum, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Date, Float, JSON, Numeric, Enum as SQLEnum, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime, timezone
@@ -11,6 +11,8 @@ class UserRole(str, enum.Enum):
     VIEWER = "viewer"
 
 class EventType(str, enum.Enum):
+    PD_TEST = "pd_test"
+    SERVICE = "service"
     BIRTH = "birth"
     DEATH = "death"
     SOLD = "sold"
@@ -102,7 +104,10 @@ class DailyLog(Base):
     location = relationship("Location")
     events = relationship("Event", back_populates="daily_log", cascade="all, delete-orphan")
     
-    __table_args__ = (UniqueConstraint('location_id', 'log_date', name='uq_daily_log'),)
+    __table_args__ = (
+        UniqueConstraint('location_id', 'log_date', name='uq_daily_log'),
+        Index('ix_daily_logs_log_date', 'log_date'),
+    )
 
 class AbortionStage(str, enum.Enum):
     EARLY = "early"      # 0-3 months
@@ -156,6 +161,8 @@ class Event(Base):
     
     # Animal tags (comma-separated for multiple)
     animal_tags = Column(Text, nullable=True)
+    pd_result = Column(String(20), nullable=True)
+    months_pregnant = Column(Integer, nullable=True)
     
     # Death-specific fields
     cause_of_death_id = Column(Integer, ForeignKey("death_causes.id"), nullable=True)
@@ -192,6 +199,30 @@ class Event(Base):
     from_location = relationship("Location", foreign_keys=[from_location_id])
     to_location = relationship("Location", foreign_keys=[to_location_id])
     disease = relationship("Disease", foreign_keys=[disease_id])
+
+    __table_args__ = (
+        Index('ix_events_daily_log_id', 'daily_log_id'),
+        Index('ix_events_event_type', 'event_type'),
+    )
+
+class EventAnimalLink(Base):
+    """Durable daily-log membership and replay journal; tombstones retain the baseline."""
+    __tablename__ = "event_animal_links"
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True, index=True)
+    animal_id = Column(Integer, ForeignKey("animals.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)
+    tag_at_link = Column(String(100), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    source_key = Column(String(100), nullable=True)
+    reproductive_payload = Column(JSON, nullable=True)
+    reproductive_baseline = Column(JSON, nullable=True)
+    category_transition_id = Column(Integer, ForeignKey("category_transitions.id"), nullable=True)
+    __table_args__ = (
+        UniqueConstraint('event_id', 'animal_id', 'role', name='uq_event_animal_role'),
+        UniqueConstraint('animal_id', 'source_key', name='uq_animal_repro_source'),
+    )
+
 
 class StockLevel(Base):
     """Computed stock levels - updated after each event"""
@@ -243,7 +274,15 @@ class Animal(Base):
     location = relationship("Location")
     creator = relationship("User", foreign_keys=[created_by])
 
-    __table_args__ = (UniqueConstraint('tag_number', 'species', 'location_id', name='uq_animal_tag'),)
+    __table_args__ = (
+        UniqueConstraint('tag_number', 'species', 'location_id', name='uq_animal_tag'),
+        Index('ix_animals_location_id', 'location_id'),
+        Index('ix_animals_category_id', 'category_id'),
+        Index('ix_animals_reproductive_status', 'reproductive_status'),
+        Index('ix_animals_birth_date', 'birth_date'),
+        Index('ix_animals_species_category_status', 'species', 'category_id', 'status'),
+        Index('ix_animals_location_status', 'location_id', 'status'),
+    )
 
 
 class HealthEventType(str, enum.Enum):
@@ -493,7 +532,11 @@ class AnimalIdentifierType(str, enum.Enum):
 
 class AnimalIdentifier(Base):
     __tablename__ = "animal_identifiers"
-    __table_args__ = (UniqueConstraint("animal_id", "id_type", "id_value"),)
+    __table_args__ = (
+        UniqueConstraint("animal_id", "id_type", "id_value"),
+        Index('ix_animal_identifiers_id_value', 'id_value'),
+        Index('ix_animal_identifiers_type_value', 'id_type', 'id_value'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
@@ -534,6 +577,8 @@ class ReconciliationEntry(Base):
     matched_animal_id = Column(Integer, ForeignKey("animals.id"), nullable=True)
     match_status = Column(String(20), nullable=False, default="unmatched_scan")
 
+    __table_args__ = (Index('ix_recon_entries_match_status', 'match_status'),)
+
 
 class ReproductiveEventType(str, enum.Enum):
     PD_TEST = "pd_test"
@@ -560,6 +605,12 @@ class ReproductiveEvent(Base):
     notes = Column(Text, nullable=True)
     recorded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     recorded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index('ix_repro_events_event_type', 'event_type'),
+        Index('ix_repro_events_event_date', 'event_date'),
+        Index('ix_repro_events_animal_date', 'animal_id', 'event_date'),
+    )
 
 
 class CustomerType(str, enum.Enum):
@@ -652,3 +703,5 @@ class CategoryTransition(Base):
     notes = Column(Text, nullable=True)
     confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index('ix_category_transitions_date', 'transition_date'),)

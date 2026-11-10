@@ -1,3 +1,4 @@
+import DailyLogTimeline from '../components/DailyLogTimeline';
 import ReproductiveEventDialog from '../components/ReproductiveEventDialog';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -1320,11 +1321,13 @@ function AnimalDetail() {
           <Tabs defaultValue="timeline" onValueChange={(tab) => { if (tab === 'reproduction') loadReproductiveSummary(); }}>
             <TabsList>
               <TabsTrigger value="timeline">Timeline</TabsTrigger>
+              <TabsTrigger value="daily-log-timeline">Daily Log Timeline</TabsTrigger>
               <TabsTrigger value="reproduction">Reproduction</TabsTrigger>
               <TabsTrigger value="bcs">BCS</TabsTrigger>
               <TabsTrigger value="notes">Notes</TabsTrigger>
               <TabsTrigger value="movements">Movement history</TabsTrigger>
             </TabsList>
+            <TabsContent value="daily-log-timeline" className="pt-4"><DailyLogTimeline key={id} animalId={id} /></TabsContent>
             <TabsContent value="timeline" className="pt-4">
               <TimelineTab items={timeline} loading={loading.timeline} canWrite={isDataEntry} onAddNote={() => setNoteDialog(true)} />
             </TabsContent>

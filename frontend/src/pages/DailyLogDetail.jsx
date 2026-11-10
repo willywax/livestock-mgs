@@ -23,7 +23,7 @@ import { format } from 'date-fns';
 import { EventFormItem, blankEvent, applyEventChange, eventFromApi, validateEvent, eventToCreatePayload, eventToUpdatePayload } from '../components/EventForm';
 
 // Event types with their own detail block in the event sheet; every other type uses the generic block.
-const typeSpecificTypes = ['death', 'birth', 'sold', 'gift_in', 'gift_out'];
+const typeSpecificTypes = ['death', 'birth', 'sold', 'gift_in', 'gift_out', 'pd_test'];
 
 const DailyLogDetail = () => {
   const { id } = useParams();
@@ -531,6 +531,14 @@ const DailyLogDetail = () => {
                 </div>
 
                   <div className="space-y-3">
+                    {et === 'pd_test' && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <DetailRow label="PD Result" value={selectedEvent.pd_result} />
+                        <DetailRow label="Months Pregnant" value={selectedEvent.months_pregnant?.toString()} />
+                        <DetailRow label="Animal Tags" value={selectedEvent.animal_tags} />
+                        <DetailRow label="Notes" value={selectedEvent.notes} />
+                      </div>
+                    )}
                     {et === 'death' && (
                       <>
                         <DetailRow label="Cause of Death" value={selectedEvent.cause_of_death} />

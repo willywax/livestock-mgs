@@ -7,7 +7,7 @@ from sqlalchemy import select, func, and_, or_, text, update
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 import os
 import re
 import logging
@@ -17,11 +17,12 @@ import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime, date, timezone, timedelta
 
 from database import get_db, init_db, engine, Base
 from models import (
+    EventAnimalLink,
     User, Location, Category, OpeningBalance, DailyLog, Event, StockLevel,
     UserRole, EventType, SpeciesType, Disease, AbortionStage,
     Animal, AnimalSex, AnimalAcquisitionType, AnimalStatus,
@@ -35,12 +36,13 @@ from models import (
     CategoryTransitionRule, CategoryTransition, TransitionTriggerType,
 )
 from schemas import (
+    AnimalTimelineItem, AnimalTimelineResponse,
     ReproductiveStatusBoardResponse,
     UserLogin, UserCreate, UserUpdate, UserResponse, TokenResponse,
     LocationCreate, LocationUpdate, LocationResponse,
     CategoryResponse,
     OpeningBalanceCreate, OpeningBalanceUpdate, OpeningBalanceResponse,
-    DailyLogCreate, DailyLogUpdate, DailyLogResponse, EventCreate, EventResponse,
+    DailyLogCreate, DailyLogUpdate, DailyLogResponse, DailyLogPage, AnimalPage, EventCreate, EventResponse,
     StockLevelResponse, DashboardResponse, SpeciesTotals, LocationTotals, EventSummary,
     DateRangeReport, DetailedReportResponse, DetailedReportEvent, EventUpdate, SpeciesCategoryTotals, CategoryTotal,
     AnalyticsResponse, SpeciesRates, HerdPerformance, NetChange,
@@ -124,6 +126,11 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # PostgreSQL stores enum member names, not their lowercase API values.
+        await conn.execute(text("ALTER TYPE eventtype ADD VALUE IF NOT EXISTS 'PD_TEST'"))
+        await conn.execute(text("ALTER TYPE eventtype ADD VALUE IF NOT EXISTS 'SERVICE'"))
+        await conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS pd_result VARCHAR(20)"))
+        await conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS months_pregnant INTEGER"))
         await conn.execute(text(
             "ALTER TABLE events ADD COLUMN IF NOT EXISTS "
             "cause_of_death_id INTEGER REFERENCES death_causes(id)"
@@ -829,32 +836,52 @@ async def update_opening_balance(
     )
 
 # ==================== DAILY LOG ROUTES ====================
-@api_router.get("/daily-logs", response_model=List[DailyLogResponse])
+@api_router.get("/daily-logs", response_model=Union[List[DailyLogResponse], DailyLogPage])
 async def list_daily_logs(
     location_id: Optional[int] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER))
 ):
-    query = select(DailyLog).options(
-        selectinload(DailyLog.location),
-        selectinload(DailyLog.events)
-    )
-    
+    """Bare list by default (existing clients); `{items,total,page,page_size,pages}` when page/page_size is given."""
+    filters = []
     if location_id:
-        query = query.where(DailyLog.location_id == location_id)
+        filters.append(DailyLog.location_id == location_id)
     if start_date:
-        query = query.where(DailyLog.log_date >= start_date)
+        filters.append(DailyLog.log_date >= start_date)
     if end_date:
-        query = query.where(DailyLog.log_date <= end_date)
-    
-    query = query.order_by(DailyLog.log_date.desc())
-    result = await db.execute(query)
-    logs = result.scalars().all()
-    
+        filters.append(DailyLog.log_date <= end_date)
+
+    event_count_sq = (
+        select(func.count(Event.id))
+        .where(Event.daily_log_id == DailyLog.id)
+        .correlate(DailyLog)
+        .scalar_subquery()
+    )
+    # Only the columns the list response reads; skips locked_*/updated_*/created_by and the heavy
+    # sale/death/gift/tag columns on events.
+    query = select(DailyLog, event_count_sq.label("event_count")).options(
+        load_only(DailyLog.id, DailyLog.location_id, DailyLog.log_date, DailyLog.has_events,
+                  DailyLog.notes, DailyLog.is_locked, DailyLog.created_at),
+        selectinload(DailyLog.location).load_only(Location.id, Location.name),
+        selectinload(DailyLog.events).load_only(
+            Event.id, Event.daily_log_id, Event.event_type, Event.species, Event.category_id, Event.count,
+            Event.from_location_id, Event.to_location_id, Event.from_category_id, Event.to_category_id,
+            Event.notes, Event.is_stock_event, Event.created_at),
+    ).where(*filters).order_by(DailyLog.log_date.desc(), DailyLog.id.desc())
+
+    paged = page is not None or page_size is not None
+    if paged:
+        page = page or 1
+        page_size = page_size or 50
+        query = query.offset((page - 1) * page_size).limit(page_size)
+    rows = (await db.execute(query)).all()
+
     response = []
-    for log in logs:
+    for log, event_count in rows:
         events = []
         for e in log.events:
             events.append(EventResponse(
@@ -871,7 +898,7 @@ async def list_daily_logs(
                 is_stock_event=e.is_stock_event,
                 created_at=e.created_at
             ))
-        
+
         response.append(DailyLogResponse(
             id=log.id,
             location_id=log.location_id,
@@ -881,10 +908,15 @@ async def list_daily_logs(
             is_locked=log.is_locked,
             created_at=log.created_at,
             location_name=log.location.name if log.location else None,
-            events=events
+            events=events,
+            event_count=event_count,
         ))
-    
-    return response
+
+    if not paged:
+        return response
+    total = (await db.execute(select(func.count()).select_from(DailyLog).where(*filters))).scalar_one()
+    return DailyLogPage(items=response, total=total, page=page, page_size=page_size,
+                        pages=-(-total // page_size))
 
 @api_router.get("/daily-logs/{log_id}", response_model=DailyLogResponse)
 async def get_daily_log(
@@ -961,6 +993,8 @@ async def get_daily_log(
             from_location_name=from_loc_name,
             to_location_name=to_loc_name,
             animal_tags=e.animal_tags,
+            pd_result=e.pd_result,
+            months_pregnant=e.months_pregnant,
             cause_of_death_id=e.cause_of_death_id,
             cause_of_death=e.cause_of_death,
             disease_id=e.disease_id,
@@ -1047,6 +1081,8 @@ async def create_daily_log(
             is_stock_event=event_data.is_stock_event,
             # New fields
             animal_tags=event_data.animal_tags,
+            pd_result=event_data.pd_result,
+            months_pregnant=event_data.months_pregnant,
             cause_of_death_id=event_data.cause_of_death_id,
             cause_of_death=event_data.cause_of_death,
             disease_id=event_data.disease_id,
@@ -1096,6 +1132,8 @@ async def create_daily_log(
             is_stock_event=event.is_stock_event,
             created_at=event.created_at,
             animal_tags=event.animal_tags,
+            pd_result=event.pd_result,
+            months_pregnant=event.months_pregnant,
             cause_of_death_id=event.cause_of_death_id,
             cause_of_death=event.cause_of_death,
             disease_id=event.disease_id,
@@ -1233,10 +1271,250 @@ async def _generate_temp_tag(location_name: Optional[str], log_date: date, db: A
         seq += 1
 
 
+_REPRO_FIELDS = ('reproductive_status', 'last_calving_date', 'last_pd_date',
+                 'months_pregnant', 'services_without_conception')
+_DAILY_REPRO_TYPES = {EventType.BIRTH, EventType.ABORTION, EventType.PD_TEST, EventType.SERVICE}
+
+
+async def _linked_animal(db, event_id, tag, species, location_id, role='subject'):
+    # An event's original tag remains meaningful after the registered tag changes.
+    linked = (await db.execute(select(Animal).join(EventAnimalLink, EventAnimalLink.animal_id == Animal.id).where(
+        EventAnimalLink.event_id == event_id, EventAnimalLink.tag_at_link == tag,
+        EventAnimalLink.role == role, Animal.species == species))).scalars().first()
+    if linked is not None:
+        return linked
+    rows = (await db.execute(select(Animal).where(Animal.tag_number == tag, Animal.species == species))).scalars().all()
+    local = [animal for animal in rows if animal.location_id == location_id]
+    candidates = local or rows
+    if len(candidates) > 1:
+        raise ValueError(f"Tag {tag}: ambiguous animal; register sync skipped")
+    return await _find_animal(db, tag, species, prefer_location=location_id)
+
+
+async def _ensure_repro_baseline(db, animal, link):
+    existing = (await db.execute(select(EventAnimalLink.id).where(
+        EventAnimalLink.animal_id == animal.id,
+        EventAnimalLink.reproductive_baseline.is_not(None)))).first()
+    # JSON NULL can differ from SQL NULL across databases: inspect actual values below.
+    baselines = (await db.execute(select(EventAnimalLink).where(
+        EventAnimalLink.animal_id == animal.id))).scalars().all() if existing else []
+    if any(row.reproductive_baseline for row in baselines):
+        return
+    state = {field: getattr(animal, field) for field in _REPRO_FIELDS}
+    for field in ('last_calving_date', 'last_pd_date'):
+        state[field] = state[field].isoformat() if state[field] else None
+    known_dates = [value for key, value in state.items() if key in ('last_pd_date', 'last_calving_date') and value]
+    latest = await db.scalar(select(func.max(ReproductiveEvent.event_date)).where(ReproductiveEvent.animal_id == animal.id))
+    if latest:
+        known_dates.append(latest.isoformat())
+    state['_through_date'] = max(known_dates) if known_dates else None
+    link.reproductive_baseline = state
+
+
+def _repro_step(state, payload):
+    kind, day = payload['type'], payload['date']
+    if kind == 'service':
+        if not payload.get('only_open') or state.get('reproductive_status') in (None, 'open', 'unknown'):
+            state['services_without_conception'] = (state.get('services_without_conception') or 0) + 1
+    elif kind == 'pd_test':
+        state['last_pd_date'] = day
+        state['reproductive_status'] = payload['result']
+        state['months_pregnant'] = payload.get('months') if payload['result'] == 'pregnant' else None
+        if payload['result'] == 'pregnant':
+            state['services_without_conception'] = 0
+    elif kind == 'birth' or kind == 'calving':
+        state.update(reproductive_status='open', last_calving_date=day, months_pregnant=None,
+                     services_without_conception=0)
+    elif kind == 'abortion':
+        state.update(reproductive_status='open', months_pregnant=None)
+        if payload.get('clear_calving'):
+            state['last_calving_date'] = None
+
+
+async def _replay_daily_reproduction(db, animal_id):
+    animal = (await db.execute(select(Animal).where(Animal.id == animal_id).with_for_update())).scalar_one()
+    links = (await db.execute(select(EventAnimalLink).where(
+        EventAnimalLink.animal_id == animal_id).order_by(EventAnimalLink.id))).scalars().all()
+    baseline = next((link.reproductive_baseline for link in links if link.reproductive_baseline), None)
+    if baseline is None:
+        return
+    state = dict(baseline)
+    sources = [link for link in links if link.is_active and link.reproductive_payload]
+    sources.sort(key=lambda link: (link.reproductive_payload['date'], link.id))
+    for link in sources:
+        if baseline.get('_through_date') and link.reproductive_payload['date'] < baseline['_through_date']:
+            continue  # historical events must not overwrite a newer pre-journal observation
+        _repro_step(state, link.reproductive_payload)
+    for field in _REPRO_FIELDS:
+        value = state[field]
+        if field in ('last_pd_date', 'last_calving_date') and value:
+            value = date.fromisoformat(value)
+        setattr(animal, field, value)
+    db.add(animal)
+
+
+async def _record_external_reproduction(db, animal, event):
+    """Keep later standalone/cycle observations in the daily-log replay journal."""
+    links = (await db.execute(select(EventAnimalLink).where(EventAnimalLink.animal_id == animal.id))).scalars().all()
+    if not any(link.reproductive_baseline for link in links):
+        return False
+    source = getattr(event, 'source_key', None) or f"reproductive:{event.id}"
+    link = next((link for link in links if link.source_key == source), None)
+    if link is None:
+        link = EventAnimalLink(animal_id=animal.id, role='external', source_key=source, is_active=True)
+        db.add(link)
+    result = getattr(event, 'pd_result', None)
+    link.reproductive_payload = dict(type=event.event_type.value, date=event.event_date.isoformat(),
+        result='pregnant' if result == PDResult.PREGNANT else 'open', months=getattr(event, 'months_pregnant', None))
+    await db.flush()
+    await _replay_daily_reproduction(db, animal.id)
+    return True
+
+
+async def _sync_daily_links(db, event, log, user, warnings):
+    """Caller isolates this block in a savepoint; retained baselines make edits/deletes replayable."""
+    await db.execute(select(Event.id).where(Event.id == event.id).with_for_update())
+    previous = (await db.execute(select(EventAnimalLink).where(EventAnimalLink.event_id == event.id))).scalars().all()
+    affected = {link.animal_id for link in previous if link.reproductive_payload}
+    for link in previous:
+        link.is_active = False
+        link.reproductive_payload = None
+    targets = []
+    for tag in _split_tags(event.animal_tags):
+        targets.append((tag, 'subject'))
+    if event.event_type in (EventType.BIRTH, EventType.ABORTION) and event.mother_tag:
+        targets.extend((tag, 'mother') for tag in _split_tags(event.mother_tag))
+    if event.event_type == EventType.BIRTH:
+        targets.extend((tag, 'offspring') for tag in _split_tags(event.offspring_tags)
+                       if tag.lower() not in _TEMP_PLACEHOLDERS)
+        temporary = (await db.execute(select(Animal).where(
+            Animal.notes == f"Auto-created temp tag from birth event #{event.id}", Animal.is_temp_tag.is_(True)))).scalars().all()
+        targets.extend((animal.tag_number, 'offspring') for animal in temporary)
+    transitioned = set()
+    for tag, role in dict.fromkeys(targets):
+        location = event.from_location_id or log.location_id if event.event_type == EventType.TRANSFER else log.location_id
+        animal = await _linked_animal(db, event.id, tag, event.species, location, role)
+        if animal is None:
+            warnings.append(f"Tag {tag}: not found; daily-log link skipped")
+            continue
+        # Lock before baseline capture so concurrent reproductive saves are serialized per animal.
+        animal = (await db.execute(select(Animal).where(Animal.id == animal.id).with_for_update()
+                                  .execution_options(populate_existing=True))).scalar_one()
+        link = next((row for row in previous if row.animal_id == animal.id and row.role == role), None)
+        if link is None:
+            link = EventAnimalLink(event_id=event.id, animal_id=animal.id, role=role, tag_at_link=tag)
+            db.add(link)
+            previous.append(link)
+        link.tag_at_link = tag
+        link.is_active = True
+        reproductive = (event.event_type in (EventType.PD_TEST, EventType.SERVICE) and role == 'subject') or (
+            event.event_type in (EventType.BIRTH, EventType.ABORTION) and role == 'mother') or (
+            event.event_type == EventType.ABORTION and not event.mother_tag and role == 'subject')
+        if not reproductive:
+            continue
+        if animal.sex != AnimalSex.FEMALE:
+            warnings.append(f"Tag {tag}: reproductive sync requires a female animal")
+            continue
+        await _ensure_repro_baseline(db, animal, link)
+        link.reproductive_payload = dict(type=event.event_type.value, date=log.log_date.isoformat(),
+            result=event.pd_result, months=event.months_pregnant, only_open=True, clear_calving=True)
+        affected.add(animal.id)
+        if event.event_type == EventType.BIRTH and animal.id not in transitioned:
+            transitioned.add(animal.id)
+            try:
+                async with db.begin_nested():
+                    prior = await db.scalar(select(func.count(CategoryTransition.id)).where(
+                        CategoryTransition.animal_id == animal.id, CategoryTransition.trigger == 'first_calving'))
+                    rule = (await db.execute(select(CategoryTransitionRule).where(
+                        CategoryTransitionRule.species == animal.species,
+                        CategoryTransitionRule.from_category_id == animal.category_id,
+                        CategoryTransitionRule.is_active.is_(True),
+                        CategoryTransitionRule.trigger_event == 'first_calving'))).scalars().first()
+                    if not prior and rule and rule.to_category_id_f:
+                        transition = await _confirm_category_transition(db, animal.id, rule.to_category_id_f,
+                            'first_calving', rule.id, 'Auto from daily log calving event', user.id)
+                        link.category_transition_id = transition.id
+            except Exception:
+                warnings.append(f"Tag {tag}: first-calving category transition skipped")
+                logger.warning("Daily-log first-calving category transition skipped", exc_info=True)
+    await db.flush()
+    for animal_id in sorted(affected):
+        await _replay_daily_reproduction(db, animal_id)
+    for link in previous:
+        if link.category_transition_id and (not link.is_active or event.event_type != EventType.BIRTH):
+            warnings.append("Prior first-calving category transition retained; review the animal category manually")
+
+
+async def _remove_daily_reproduction(db, event_id, warnings):
+    links = (await db.execute(select(EventAnimalLink).where(EventAnimalLink.event_id == event_id))).scalars().all()
+    affected = {link.animal_id for link in links if link.reproductive_payload}
+    for link in links:
+        link.is_active = False
+        link.reproductive_payload = None
+        if link.category_transition_id:
+            warnings.append("First-calving category transition retained; review the animal category manually")
+    await db.flush()
+    for animal_id in sorted(affected):
+        await _replay_daily_reproduction(db, animal_id)
+
+
+async def _backfill_daily_event_links(db, apply=False):
+    """Explicit migration only: exact, unambiguous links; no reproductive/stock updates."""
+    counts = dict(events=0, links=0, unresolved=0)
+    after_id = 0
+    while True:
+        events = (await db.execute(select(Event).options(selectinload(Event.daily_log)).where(
+            Event.id > after_id).order_by(Event.id).limit(200))).scalars().all()
+        if not events:
+            break
+        for event in events:
+            counts['events'] += 1
+            after_id = event.id
+            # Already-synced events (including edits/removals) must not regain stale links.
+            if await db.scalar(select(EventAnimalLink.id).where(EventAnimalLink.event_id == event.id).limit(1)):
+                continue
+            targets = [(tag, 'subject') for tag in _split_tags(event.animal_tags)]
+            if event.event_type in (EventType.BIRTH, EventType.ABORTION):
+                targets.extend((tag, 'mother') for tag in _split_tags(event.mother_tag))
+            if event.event_type == EventType.BIRTH:
+                targets.extend((tag, 'offspring') for tag in _split_tags(event.offspring_tags)
+                               if tag.lower() not in _TEMP_PLACEHOLDERS)
+            resolved = {}
+            for tag, role in targets:
+                # Never guess between duplicate historical tags at different farms.
+                animals = (await db.execute(select(Animal).where(Animal.tag_number == tag,
+                    Animal.species == event.species))).scalars().all()
+                if len(animals) != 1:
+                    counts['unresolved'] += 1
+                    continue
+                resolved[(animals[0].id, role)] = tag
+            history = (await db.execute(select(AnimalLocationHistory).where(
+                AnimalLocationHistory.event_id == event.id))).scalars().all()
+            for movement in history:
+                animal = await db.get(Animal, movement.animal_id)
+                if animal:
+                    resolved[(animal.id, 'subject')] = animal.tag_number
+            if event.event_type == EventType.BIRTH:
+                temporary = (await db.execute(select(Animal).where(
+                    Animal.notes == f"Auto-created temp tag from birth event #{event.id}",
+                    Animal.is_temp_tag.is_(True)))).scalars().all()
+                for animal in temporary:
+                    resolved[(animal.id, 'offspring')] = animal.tag_number
+            counts['links'] += len(resolved)
+            if apply:
+                for (animal_id, role), tag in resolved.items():
+                    db.add(EventAnimalLink(event_id=event.id, animal_id=animal_id, role=role,
+                                          tag_at_link=tag, is_active=True))
+        if apply:
+            await db.commit()
+    return counts
+
+
 async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: DailyLog,
                                    current_user: User) -> List[str]:
     """Apply an event to the individual animal register. Never raises; returns warnings."""
     warnings: List[str] = []
+    event_id = None
     try:
         et = event.event_type
         species = event.species
@@ -1249,8 +1527,6 @@ async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: Da
         user_id = current_user.id
         tags = _split_tags(event.animal_tags)
         offspring = _offspring_entries(event.offspring_tags, event.count) if et == EventType.BIRTH else []
-        if not tags and not offspring:
-            return warnings
 
         def warn(msg: str) -> None:
             logger.warning("Animal register sync (event %s): %s", event_id, msg)
@@ -1276,7 +1552,8 @@ async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: Da
             return animal
 
         for tag in tags:
-            animal = await _find_animal(db, tag, species, prefer_location=log_location_id)
+            animal = await _linked_animal(db, event_id, tag, species,
+                                          event.from_location_id or log_location_id if et == EventType.TRANSFER else log_location_id)
             if animal is None:
                 if et in (EventType.BOUGHT, EventType.GIFT_IN):
                     await create_animal_row(tag, AnimalAcquisitionType.BOUGHT)
@@ -1355,14 +1632,24 @@ async def _sync_animals_from_event(db: AsyncSession, event: Event, daily_log: Da
                 tag, AnimalAcquisitionType.BORN, is_temp_tag=tag.upper().startswith("TEMP-")
             )
 
+        # Isolate new linking/reproductive work from the existing register effects.
+        try:
+            async with db.begin_nested():
+                await _sync_daily_links(db, event, daily_log, current_user, warnings)
+        except Exception:
+            logger.warning("Daily-log reproductive/link sync skipped for event %s", event_id, exc_info=True)
+            warnings.append("Daily-log reproductive/link sync failed; event saved, review the animal register")
         await db.commit()
     except Exception:
-        logger.exception("Animal register sync failed for event %s", getattr(event, "id", None))
+        logger.warning("Animal register sync failed for event %s", event_id, exc_info=True)
         try:
             await db.rollback()
         except Exception:
-            logger.exception("Rollback after animal register sync failure also failed")
-        await _restore_after_rollback(db, event, daily_log, current_user)
+            logger.warning("Rollback after animal register sync failure also failed", exc_info=True)
+        try:
+            await _restore_after_rollback(db, event, daily_log, current_user)
+        except Exception:
+            logger.warning("Could not restore objects after register sync failure", exc_info=True)
         warnings.append(_SYNC_FAILED_MSG)
     return warnings
 
@@ -1412,8 +1699,7 @@ async def _reverse_animal_sync(db: AsyncSession, snap: SimpleNamespace, deleting
         elif et in _REVERSIBLE_STATUS:
             expected = _REVERSIBLE_STATUS[et]
             for tag in tags:
-                animal = await _find_animal(db, tag, snap.species, prefer_location=snap.location_id,
-                                            prefer_status=expected)
+                animal = await _linked_animal(db, snap.id, tag, snap.species, snap.location_id)
                 if animal is None:
                     continue
                 if animal.status == expected:
@@ -1423,13 +1709,20 @@ async def _reverse_animal_sync(db: AsyncSession, snap: SimpleNamespace, deleting
         elif et in (EventType.CATEGORY_CHANGE, EventType.WEANING):
             old_cat = snap.from_category_id or snap.category_id
             for tag in tags:
-                animal = await _find_animal(db, tag, snap.species, prefer_location=snap.location_id)
+                animal = await _linked_animal(db, snap.id, tag, snap.species, snap.location_id)
                 if animal is not None and old_cat and animal.category_id == snap.to_category_id:
                     animal.category_id = old_cat
         elif deleting and et in (EventType.BOUGHT, EventType.GIFT_IN, EventType.BIRTH):
             if tags or (et == EventType.BIRTH and snap.offspring_tags):
                 warn("Animals created by this event were left in the register; remove them manually if wrong")
 
+        if deleting:
+            try:
+                async with db.begin_nested():
+                    await _remove_daily_reproduction(db, snap.id, warnings)
+            except Exception:
+                logger.warning("Reproductive reversal failed for deleted event %s", snap.id, exc_info=True)
+                warnings.append("Reproductive reversal failed; review the animal register")
         await db.commit()
     except Exception:
         logger.exception("Animal register reverse failed for event %s", snap.id)
@@ -1480,6 +1773,8 @@ async def add_event_to_daily_log(
         notes=event_data.notes,
         is_stock_event=event_data.is_stock_event,
         animal_tags=event_data.animal_tags,
+        pd_result=event_data.pd_result,
+        months_pregnant=event_data.months_pregnant,
         cause_of_death_id=event_data.cause_of_death_id,
         cause_of_death=event_data.cause_of_death,
         disease_id=event_data.disease_id,
@@ -1524,6 +1819,8 @@ async def add_event_to_daily_log(
         is_stock_event=event.is_stock_event,
         created_at=event.created_at,
         animal_tags=event.animal_tags,
+        pd_result=event.pd_result,
+        months_pregnant=event.months_pregnant,
         cause_of_death_id=event.cause_of_death_id,
         cause_of_death=event.cause_of_death,
         disease_id=event.disease_id,
@@ -1605,6 +1902,25 @@ async def update_daily_log(
     await db.commit()
     await db.refresh(log)
 
+    if data.log_date is not None:
+        try:
+            async with db.begin_nested():
+                links = (await db.execute(select(EventAnimalLink).join(Event, Event.id == EventAnimalLink.event_id)
+                    .where(Event.daily_log_id == log_id, EventAnimalLink.is_active.is_(True)))).scalars().all()
+                affected = set()
+                for link in links:
+                    if link.reproductive_payload:
+                        link.reproductive_payload = {**link.reproductive_payload, 'date': log.log_date.isoformat()}
+                        affected.add(link.animal_id)
+                await db.flush()
+                for animal_id in sorted(affected):
+                    await _replay_daily_reproduction(db, animal_id)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            await _restore_after_rollback(db, log)
+            logger.warning("Daily log date changed but reproductive replay failed", exc_info=True)
+
     # Reload with relationships for the response
     result = await db.execute(
         select(DailyLog)
@@ -1654,11 +1970,15 @@ async def update_event(
     location_id = event.daily_log.location_id
 
     effective_type = data.event_type or event.event_type
+    effective_result = data.pd_result if 'pd_result' in data.model_fields_set else event.pd_result
+    if effective_type == EventType.PD_TEST and effective_result is None:
+        raise HTTPException(status_code=400, detail="A PD test requires result pregnant or open")
     if "cause_of_death_id" in data.model_fields_set:
         await _validate_death_cause(db, effective_type, data.cause_of_death_id,
                                     existing_id=event.cause_of_death_id)
     # ADDED: Type-specific field guard — reject fields that don't apply to event_type
     _type_fields: dict = {
+        EventType.PD_TEST: {"pd_result", "months_pregnant"},
         EventType.DEATH:    {"cause_of_death", "disease_id", "days_sick", "attending_vet"},
         EventType.BIRTH:    {"mother_tag", "offspring_tags"},
         EventType.SOLD:     {"buyer_name", "buyer_phone", "buyer_address", "sale_price"},
@@ -1702,8 +2022,16 @@ async def update_event(
     if data.event_type is not None and data.event_type != event.event_type:
         for _field in _all_typed - _type_fields.get(effective_type, set()):
             setattr(event, _field, None)
-        event.is_stock_event = effective_type != EventType.ABORTION
+        event.is_stock_event = effective_type not in (EventType.ABORTION, EventType.PD_TEST, EventType.SERVICE)
 
+    if effective_type in (EventType.ABORTION, EventType.PD_TEST, EventType.SERVICE):
+        event.is_stock_event = False
+    if 'pd_result' in data.model_fields_set:
+        event.pd_result = data.pd_result
+    if 'months_pregnant' in data.model_fields_set:
+        event.months_pregnant = data.months_pregnant
+    if effective_type == EventType.PD_TEST and effective_result == 'open':
+        event.months_pregnant = None
     # Update event fields
     if "cause_of_death_id" in data.model_fields_set:
         event.cause_of_death_id = data.cause_of_death_id
@@ -1794,6 +2122,8 @@ async def update_event(
         is_stock_event=event.is_stock_event,
         created_at=event.created_at,
         animal_tags=event.animal_tags,
+        pd_result=event.pd_result,
+        months_pregnant=event.months_pregnant,
         cause_of_death_id=event.cause_of_death_id,
         cause_of_death=event.cause_of_death,
         disease_id=event.disease_id,
@@ -1843,6 +2173,9 @@ async def delete_event(
         update(AnimalLocationHistory).where(AnimalLocationHistory.event_id == event.id).values(event_id=None)
     )
 
+    # Tombstones retain reproductive baselines without dangling event foreign keys.
+    await db.execute(update(EventAnimalLink).where(EventAnimalLink.event_id == event.id)
+                     .values(event_id=None, is_active=False))
     # Reverse the stock changes if it was a stock event
     if event.is_stock_event:
         event_data = EventCreate(
@@ -3432,7 +3765,7 @@ async def download_animals_template(db: AsyncSession = Depends(get_db)):
         headers={'Content-Disposition': 'attachment; filename=animals_template.csv'}
     )
 
-@api_router.get("/animals", response_model=List[AnimalResponse])
+@api_router.get("/animals", response_model=Union[List[AnimalResponse], AnimalPage])
 async def list_animals(
     species: Optional[SpeciesType] = None,
     location_id: Optional[int] = None,
@@ -3440,32 +3773,47 @@ async def list_animals(
     status: Optional[AnimalStatus] = None,
     search: Optional[str] = None,
     is_temp_tag: Optional[bool] = None,
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=200),
+    export: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = select(Animal).options(
-        selectinload(Animal.category),
-        selectinload(Animal.location),
-        selectinload(Animal.creator),
-    )
+    """Bare list by default (existing clients) and with export=true; `{items,total,page,page_size,pages}`
+    when page/page_size is given (ignored if export=true)."""
+    filters = []
     if species:
-        query = query.where(Animal.species == species)
+        filters.append(Animal.species == species)
     if location_id:
-        query = query.where(Animal.location_id == location_id)
+        filters.append(Animal.location_id == location_id)
     if category_id:
-        query = query.where(Animal.category_id == category_id)
+        filters.append(Animal.category_id == category_id)
     if status:
-        query = query.where(Animal.status == status)
+        filters.append(Animal.status == status)
     if is_temp_tag is not None:
-        query = query.where(Animal.is_temp_tag == is_temp_tag)
+        filters.append(Animal.is_temp_tag == is_temp_tag)
     if search:
-        query = query.where(
-            or_(Animal.tag_number.ilike(f'%{search}%'), Animal.name.ilike(f'%{search}%'))
-        )
-    query = query.order_by(Animal.species, Animal.tag_number)
-    result = await db.execute(query)
-    animals = result.scalars().all()
-    return [_animal_response(a) for a in animals]
+        filters.append(or_(Animal.tag_number.ilike(f'%{search}%'), Animal.name.ilike(f'%{search}%')))
+
+    # The related rows are tiny; load only the columns _animal_response reads. Animal columns stay whole
+    # because the list response (and Animals.jsx) uses notes and every other field.
+    query = select(Animal).options(
+        selectinload(Animal.category).load_only(Category.id, Category.name_sw, Category.name_en),
+        selectinload(Animal.location).load_only(Location.id, Location.name),
+        selectinload(Animal.creator).load_only(User.id, User.name),
+    ).where(*filters).order_by(Animal.species, Animal.tag_number, Animal.id)
+
+    paged = (page is not None or page_size is not None) and not export
+    if paged:
+        page = page or 1
+        page_size = page_size or 50
+        query = query.offset((page - 1) * page_size).limit(page_size)
+    animals = (await db.execute(query)).scalars().all()
+    items = [_animal_response(a) for a in animals]
+    if not paged:
+        return items
+    total = (await db.execute(select(func.count()).select_from(Animal).where(*filters))).scalar_one()
+    return AnimalPage(items=items, total=total, page=page, page_size=page_size, pages=-(-total // page_size))
 
 @api_router.post("/animals", response_model=AnimalResponse)
 async def create_animal(
@@ -3774,6 +4122,14 @@ def _age_in_months(birth_date: date, today: date) -> int:
     return max(months, 0)
 
 
+def _months_ago(today: date, months: int) -> date:
+    """`today` minus whole calendar months, day clamped to the target month's length."""
+    year, month0 = divmod(today.year * 12 + today.month - 1 - months, 12)
+    month = month0 + 1
+    next_first = date(year + (month == 12), month % 12 + 1, 1)
+    return date(year, month, min(today.day, (next_first - timedelta(days=1)).day))
+
+
 def _rule_trigger_label(rule: CategoryTransitionRule) -> str:
     if rule.trigger_type == TransitionTriggerType.AGE:
         return f"age_{rule.trigger_age_months}m"
@@ -3906,28 +4262,41 @@ async def _build_transition_queue(db: AsyncSession, species=None, location_id=No
     recent = {(r.animal_id, r.from_category_id, r.to_category_id) for r in (await db.execute(
         select(CategoryTransition).where(CategoryTransition.transition_date >= today - timedelta(days=7))
     )).scalars()}
-    pending = []
-    for rule in rules:
-        query = select(Animal).options(selectinload(Animal.location)).where(
+    # One query for all rules: each rule contributes (species, category, born on/before cutoff). The cutoff
+    # is "today minus N whole months" (day clamped), which is exactly age_in_months >= N.
+    rule_by_key = {}
+    conditions = []
+    for index, rule in enumerate(rules):
+        rule_by_key.setdefault((rule.species, rule.from_category_id), (index, rule))
+        conditions.append(and_(
             Animal.species == rule.species, Animal.category_id == rule.from_category_id,
-            Animal.status == AnimalStatus.ACTIVE, Animal.birth_date.isnot(None),
-        ).order_by(Animal.tag_number)
-        if location_id is not None:
-            query = query.where(Animal.location_id == location_id)
-        for animal in (await db.execute(query)).scalars().all():
-            age = _age_in_months(animal.birth_date, today)
-            if age < rule.trigger_age_months:
-                continue
-            target = rule.to_category_id_f if animal.sex == AnimalSex.FEMALE else rule.to_category_id_m
-            if target is None or (animal.id, rule.from_category_id, target) in recent:
-                continue
-            pending.append(TransitionQueueItem(
-                animal_id=animal.id, tag_number=animal.tag_number, species=animal.species,
-                current_category=cat_names.get(animal.category_id, ""), to_category_id=target,
-                to_category=cat_names.get(target, ""), age_months=age,
-                location_name=animal.location.name if animal.location else None,
-                rule_id=rule.id, trigger=_rule_trigger_label(rule),
-            ))
+            Animal.birth_date <= _months_ago(today, rule.trigger_age_months),
+        ))
+    query = select(Animal).options(
+        selectinload(Animal.location).load_only(Location.id, Location.name),
+    ).where(Animal.status == AnimalStatus.ACTIVE, Animal.birth_date.isnot(None), or_(*conditions))
+    if location_id is not None:
+        query = query.where(Animal.location_id == location_id)
+    candidates = []
+    for animal in (await db.execute(query)).scalars().all():
+        index, rule = rule_by_key[(animal.species, animal.category_id)]
+        candidates.append((index, animal.tag_number, animal.id, animal, rule))
+    candidates.sort(key=lambda c: c[:3])  # rule order, then tag: same order as the old per-rule loop
+    pending = []
+    for _, _, _, animal, rule in candidates:
+        age = _age_in_months(animal.birth_date, today)
+        if age < rule.trigger_age_months:
+            continue
+        target = rule.to_category_id_f if animal.sex == AnimalSex.FEMALE else rule.to_category_id_m
+        if target is None or (animal.id, rule.from_category_id, target) in recent:
+            continue
+        pending.append(TransitionQueueItem(
+            animal_id=animal.id, tag_number=animal.tag_number, species=animal.species,
+            current_category=cat_names.get(animal.category_id, ""), to_category_id=target,
+            to_category=cat_names.get(target, ""), age_months=age,
+            location_name=animal.location.name if animal.location else None,
+            rule_id=rule.id, trigger=_rule_trigger_label(rule),
+        ))
     return TransitionQueueResponse(pending=pending, total=len(pending))
 
 
@@ -5855,6 +6224,48 @@ async def delete_animal_identifier(
     return {"message": "Identifier deleted"}
 
 
+# ---------- Daily-log animal timeline (existing activity timeline stays compatible) ----------
+@api_router.get("/animals/{animal_id}/daily-log-timeline", response_model=AnimalTimelineResponse)
+async def get_daily_log_animal_timeline(
+    animal_id: int,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    event_type: Optional[EventType] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(*_ANY_ROLE)),
+):
+    await _require_animal(db, animal_id)
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(status_code=400, detail="from_date must not be after to_date")
+    linked = select(EventAnimalLink.id).where(EventAnimalLink.event_id == Event.id,
+        EventAnimalLink.animal_id == animal_id, EventAnimalLink.is_active.is_(True)).exists()
+    filters = [linked]
+    if from_date:
+        filters.append(DailyLog.log_date >= from_date)
+    if to_date:
+        filters.append(DailyLog.log_date <= to_date)
+    if event_type:
+        filters.append(Event.event_type == event_type)
+    total = await db.scalar(select(func.count(Event.id)).join(DailyLog).where(*filters))
+    query = (select(Event, DailyLog.log_date, Location.name, User.name)
+             .join(DailyLog, DailyLog.id == Event.daily_log_id)
+             .join(Location, Location.id == DailyLog.location_id)
+             .outerjoin(User, User.id == Event.created_by)
+             .where(*filters).order_by(DailyLog.log_date.desc(), Event.id.desc())
+             .offset((page - 1) * page_size).limit(page_size))
+    labels = {EventType.BIRTH: "Birth", EventType.PD_TEST: "PD test", EventType.SERVICE: "Service / mating",
+              EventType.ABORTION: "Abortion", EventType.SOLD: "Sale", EventType.DEATH: "Death",
+              EventType.TRANSFER: "Transfer", EventType.CATEGORY_CHANGE: "Category change"}
+    items = [AnimalTimelineItem(event_id=event.id, event_type=event.event_type, event_date=day,
+        event_type_label=labels.get(event.event_type, event.event_type.value.replace('_', ' ').title()),
+        daily_log_id=event.daily_log_id, farm_name=farm, notes=event.notes, quantity=event.count,
+        result=event.pd_result if event.event_type == EventType.PD_TEST else None, recorded_by_name=recorder)
+        for event, day, farm, recorder in (await db.execute(query)).all()]
+    return AnimalTimelineResponse(items=items, total=total or 0, page=page, page_size=page_size)
+
+
 # ---------- Animal timeline ----------
 @api_router.get("/animals/{animal_id}/timeline", response_model=List[TimelineItem])
 async def get_animal_timeline(
@@ -6053,6 +6464,9 @@ async def _apply_reproductive_status(db, animal_id, event):
     animal = await db.get(Animal, animal_id)
     if animal is None:
         return
+    if await _record_external_reproduction(db, animal, event):
+        await db.flush()
+        return
     if event.event_type == ReproductiveEventType.SERVICE:
         animal.services_without_conception = (animal.services_without_conception or 0) + 1
     elif event.event_type == ReproductiveEventType.PD_TEST:
@@ -6080,7 +6494,7 @@ async def _sync_cycle_calving_status(db, cycle):
     event_type = (ReproductiveEventType.ABORTION if cycle.calving_outcome == CalvingOutcome.ABORTION
                   else ReproductiveEventType.CALVING)
     await _apply_reproductive_status(db, cycle.animal_id, SimpleNamespace(
-        event_type=event_type, event_date=cycle.actual_calving_date,
+        event_type=event_type, event_date=cycle.actual_calving_date, source_key=f"cycle:{cycle.id}",
     ))
 
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from typing import Optional, List, Literal
 from datetime import datetime, date
 from decimal import Decimal
@@ -116,6 +116,8 @@ class EventCreate(BaseModel):
     is_stock_event: bool = True
     # Common field for all events
     animal_tags: Optional[str] = None
+    pd_result: Optional[Literal["pregnant", "open"]] = None
+    months_pregnant: Optional[int] = Field(default=None, ge=0, le=12)
     # Death-specific
     cause_of_death_id: Optional[int] = None
     cause_of_death: Optional[str] = None
@@ -133,6 +135,19 @@ class EventCreate(BaseModel):
     buyer_address: Optional[str] = None
     sale_price: Optional[int] = None
 
+    @model_validator(mode="after")
+    def validate_reproductive_event(self):
+        if self.event_type in (EventType.PD_TEST, EventType.SERVICE, EventType.ABORTION):
+            self.is_stock_event = False
+        if self.event_type == EventType.PD_TEST and self.pd_result is None:
+            raise ValueError("A PD test requires result pregnant or open")
+        if self.event_type != EventType.PD_TEST and (self.pd_result is not None or self.months_pregnant is not None):
+            raise ValueError("PD fields only apply to a PD test")
+        if self.pd_result == "open":
+            self.months_pregnant = None
+        return self
+
+
 class EventUpdate(BaseModel):
     event_type: Optional[EventType] = None
     species: Optional[SpeciesType] = None
@@ -144,6 +159,8 @@ class EventUpdate(BaseModel):
     to_category_id: Optional[int] = None
     notes: Optional[str] = None
     animal_tags: Optional[str] = None
+    pd_result: Optional[Literal["pregnant", "open"]] = None
+    months_pregnant: Optional[int] = Field(default=None, ge=0, le=12)
     cause_of_death_id: Optional[int] = None
     cause_of_death: Optional[str] = None
     disease_id: Optional[int] = None
@@ -181,6 +198,8 @@ class EventResponse(BaseModel):
     to_location_name: Optional[str] = None
     # Additional fields
     animal_tags: Optional[str] = None
+    pd_result: Optional[Literal["pregnant", "open"]] = None
+    months_pregnant: Optional[int] = Field(default=None, ge=0, le=12)
     cause_of_death_id: Optional[int] = None
     cause_of_death: Optional[str] = None
     disease_id: Optional[int] = None
@@ -224,6 +243,7 @@ class DailyLogResponse(BaseModel):
     created_at: datetime
     location_name: Optional[str] = None
     events: List[EventResponse] = []
+    event_count: Optional[int] = None  # set by the list endpoint only
 
 # Stock Level schemas
 class StockLevelResponse(BaseModel):
@@ -1339,3 +1359,40 @@ class BulkConfirmResponse(BaseModel):
     results: List[BulkConfirmResult]
     succeeded: int
     failed: int
+
+
+# Opt-in pagination envelopes (returned only when page/page_size is passed)
+class AnimalPage(BaseModel):
+    items: List[AnimalResponse]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class DailyLogPage(BaseModel):
+    items: List[DailyLogResponse]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AnimalTimelineItem(BaseModel):
+    event_id: int
+    event_type: EventType
+    event_date: date
+    event_type_label: str
+    daily_log_id: int
+    farm_name: str
+    notes: Optional[str]
+    quantity: int
+    result: Optional[str]
+    recorded_by_name: Optional[str]
+
+
+class AnimalTimelineResponse(BaseModel):
+    items: List[AnimalTimelineItem]
+    total: int
+    page: int
+    page_size: int

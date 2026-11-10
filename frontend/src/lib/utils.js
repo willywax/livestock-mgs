@@ -6,6 +6,8 @@ export function cn(...inputs) {
 }
 
 export const EVENT_TYPES = {
+  pd_test: { label: 'PD Test', color: 'bg-pink-100 text-pink-800', icon: 'Heart' },
+  service: { label: 'Service / Mating', color: 'bg-pink-100 text-pink-800', icon: 'Heart' },
   birth: { label: 'Birth', color: 'bg-green-100 text-green-800', icon: 'Plus' },
   death: { label: 'Death', color: 'bg-red-100 text-red-800', icon: 'Minus' },
   sold: { label: 'Sold', color: 'bg-blue-100 text-blue-800', icon: 'CurrencyDollar' },

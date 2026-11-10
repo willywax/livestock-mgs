@@ -35,7 +35,7 @@ Auth describes backend enforcement, not frontend visibility. Shamba uses phone/p
 | GET | `/api/opening-balances` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list opening balances | path/query only -> List[OpeningBalanceResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:662` |
 | POST | `/api/opening-balances` | JWT ADMIN | create opening balance | OpeningBalanceCreate -> OpeningBalanceResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:695` |
 | PUT | `/api/opening-balances/{balance_id}` | JWT ADMIN | update opening balance | OpeningBalanceUpdate -> OpeningBalanceResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:742` |
-| GET | `/api/daily-logs` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list daily logs | path/query only -> List[DailyLogResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:773` |
+| GET | `/api/daily-logs` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | list daily logs | `page`/`page_size` (opt-in; max 200). Bare list by default; `{items,total,page,page_size,pages}` when either is given. Each log has optional `event_count` | List[DailyLogResponse] or DailyLogPage | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:773` |
 | GET | `/api/daily-logs/{log_id}` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get daily log | path/query only -> DailyLogResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:829` |
 | POST | `/api/daily-logs` | JWT ADMIN,DATA_ENTRY | create daily log | DailyLogCreate -> DailyLogResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:927` |
 | POST | `/api/daily-logs/{log_id}/events` | JWT ADMIN | add event to daily log | EventCreate -> EventResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1071` |
@@ -54,7 +54,7 @@ Animal-register sync (decision 0009): `POST /api/daily-logs` (events embedded; s
 | GET | `/api/reports/analytics` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get analytics report | path/query only -> AnalyticsResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1990` |
 | GET | `/api/reports/detailed` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get detailed report | path/query only -> DetailedReportResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:2508` |
 | GET | `/api/templates/animals` | Public | download animals template | path/query only -> CSV StreamingResponse (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:2992` |
-| GET | `/api/animals` | JWT active user | list animals (optional `is_temp_tag=true|false` filter; omitted = no filter); `AnimalResponse` includes read-only `last_calving_date` | path/query only -> List[AnimalResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3039` |
+| GET | `/api/animals` | JWT active user | list animals (optional `is_temp_tag=true|false` filter; omitted = no filter); `AnimalResponse` includes read-only `last_calving_date` | `page`/`page_size` (opt-in; max 200) and `export=true`. Bare list by default and with `export=true`; `{items,total,page,page_size,pages}` when page/page_size is given | List[AnimalResponse] or AnimalPage | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3039` |
 | POST | `/api/animals` | JWT ADMIN,DATA_ENTRY | create animal | AnimalCreate -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3071` |
 | POST | `/api/animals/bulk-import` | JWT ADMIN | bulk import animals | UploadFile -> BulkImportResult | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3118` |
 | GET | `/api/animals/register-reconciliation` | JWT ADMIN,DATA_ENTRY,VIEWER | per location+species: stock_levels total vs registered active animals (`registered_pct` null when stock is 0; `unregistered` may be negative) | none -> List[ReconciliationRow] | Animals.jsx (Register completeness panel), Dashboard.jsx (Animal register card) | `backend/server.py` (register_reconciliation) |
@@ -135,3 +135,15 @@ Both due buckets use the inclusive interval today through today + 30 days. Estim
 | POST | `/api/animals/bulk-confirm-transitions` | JWT ADMIN,DATA_ENTRY | per-animal result, partial success persists | bulk_confirm_transitions |
 | GET | `/api/animals/{animal_id}/transition-history` | JWT ADMIN,DATA_ENTRY,VIEWER | audit rows, newest first | get_transition_history |
 Also: recording a `calving` reproductive event (`POST /api/animals/{id}/reproductive-events`) auto-confirms the first-calving rule (Mitamba -> Koo). Best-effort: if it fails (e.g. stock 0) the calving still saves and a warning is logged.
+
+### Daily-log reproduction and animal feed (2026-11-10)
+Daily event create/update accepts `pd_test` and `service`. PD tests require
+`pd_result` (`pregnant` or `open`), with optional integer `months_pregnant` (0–12).
+PD tests, services and abortions are non-stock events. Open PD clears months.
+`GET /api/animals/{animal_id}/daily-log-timeline` is available to all authenticated
+roles: `from_date`, `to_date`, `event_type`, `page` (default 1), `page_size`
+(default 20, maximum 100). Returns `{items,total,page,page_size}`; items contain
+`event_id,event_type,event_date,event_type_label,daily_log_id,farm_name,notes,
+quantity,result,recorded_by_name`. Newest date/id first; invalid date ranges are
+400, missing animals 404. The existing `/timeline` route is unchanged.
+See [daily reproduction operations](../DAILY_REPRODUCTIVE_SYNC.md).

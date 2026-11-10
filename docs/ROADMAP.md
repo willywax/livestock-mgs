@@ -24,3 +24,13 @@ Done 2026-11-08: Animal detail page `/animals/:id` (branch `ft/animal-detail`).
 
 ## Status board delivery (2026-11-10)
 Implemented the nine-bucket reproductive status board and collapsible sidebar groups. Remaining navigation work: implement Transition Queue, Stock Overview, Sales Report and Customers frontend pages at their requested routes. Existing links and role restrictions are retained. No deployment is included in this change.
+
+## List performance (2026-11-10)
+Done: opt-in pagination on `GET /api/animals` and `GET /api/daily-logs` (bare list stays the default so existing consumers keep working), `event_count` on daily-log rows, column pruning on embedded events and related rows, and a single-query transition queue (SQL birth-date cutoff). Remaining: move Animals.jsx / DailyLogs.jsx to paged requests (then the default can change), and an optional SQL rewrite of the status board (left as is: two queries, overlapping Python-side buckets).
+
+## Delivered locally: daily-log reproductive sync (2026-11-10)
+PD/service entry, mother reproductive updates and first-calving hooks, durable
+animal links, replay on edit/delete, and a lazy paginated Daily Log Timeline.
+SQLite backend suite: 228 passed; frontend: 26 passed. Production build passes.
+SQL migration and optional historical-link backfill supplied; production
+migration/deployment not performed for this feature. See DAILY_REPRODUCTIVE_SYNC.md.

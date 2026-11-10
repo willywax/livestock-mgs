@@ -21,4 +21,12 @@ Legacy: table `registry_sync_outbox` still exists in existing databases but has 
 - `create_all` does not alter existing tables, enum members, indexes or constraints. Alembic is installed but there is no migration directory.
 - Existing startup DDL is in `backend/server.py` near line 98; it is not a general migration framework.
 - Test every schema change on the Docker test DB (`docker-compose.test.yml`), use `/db-change`, keep old readers working, and record rollback.
-- Index candidates (unmeasured, Unverified): `events(daily_log_id)`, `daily_logs(log_date)`.
+- Performance indexes (2026-11-10): 16 btree indexes declared in `__table_args__` in `backend/models.py` and created on existing databases by `backend/migrations/add_perf_indexes.sql` (manual, `CREATE INDEX CONCURRENTLY IF NOT EXISTS`, not in a transaction, run by the owner with `psql -f`). Index-only; no column/table changes. Names match between models and SQL. Gain unmeasured (Unverified). Rollback: `DROP INDEX CONCURRENTLY IF EXISTS <name>`. Skipped as redundant: `daily_logs(location_id[, log_date])` (uq_daily_log) and the `stock_levels` composite (uq_stock_level).
+
+## Daily-log reproductive journal (2026-11-10)
+`events` adds `pd_result` and `months_pregnant`; `eventtype` adds `PD_TEST` and
+`SERVICE`. `event_animal_links` stores durable animal/event/role associations,
+original tags, active flags, reproductive payloads/baselines, external source
+keys and optional category-transition IDs. Event deletion retains inactive
+journal rows with a null event ID so reproductive baselines remain available.
+See [migration and replay details](DAILY_REPRODUCTIVE_SYNC.md).

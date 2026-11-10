@@ -22,11 +22,13 @@ export const EVENT_TYPE_OPTIONS = [
   { value: 'transfer', label: 'Transfer' },
   { value: 'category_change', label: 'Category Change' },
   { value: 'abortion', label: 'Abortion (Note)' },
+  { value: 'pd_test', label: 'PD Test (Non-stock)' },
+  { value: 'service', label: 'Service / Mating (Non-stock)' },
 ];
 
 // Event types whose animals already exist in the register -> searchable picker.
 // bought / gift_in (animals not registered yet) and birth keep the plain text input.
-const PICKER_EVENT_TYPES = ['death', 'sold', 'missing', 'gift_out', 'transfer', 'category_change', 'weaning', 'abortion'];
+const PICKER_EVENT_TYPES = ['death', 'sold', 'missing', 'gift_out', 'transfer', 'category_change', 'weaning', 'abortion', 'pd_test', 'service'];
 
 const ABORTION_STAGES = [
   { value: 'early', label: 'Early (0-3 months)' },
@@ -248,6 +250,7 @@ export function EventFormItem({ event, index, categories, locations, diseases, l
             locationId={pickerLocationId}
             species={event.species}
             categoryId={pickerCategoryId}
+            sex={['pd_test', 'service', 'abortion'].includes(eventType) ? 'female' : undefined}
             value={event.animal_tags || ''}
             onChange={handlePickedTags}
             onAnimalsPicked={handleAnimalsPicked}
@@ -267,7 +270,7 @@ export function EventFormItem({ event, index, categories, locations, diseases, l
         )}
       </div>
 
-      {eventType !== 'category_change' && eventType !== 'abortion' && (
+      {!['category_change', 'abortion', 'pd_test', 'service'].includes(eventType) && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Label>Category</Label>
@@ -307,6 +310,21 @@ export function EventFormItem({ event, index, categories, locations, diseases, l
           </Select>
         </div>
       )}
+
+      {eventType === 'pd_test' && (
+        <div className="grid grid-cols-1 gap-4 rounded-lg bg-pink-50 p-3 md:grid-cols-2">
+          <div className="space-y-2"><Label>PD result</Label>
+            <Select value={event.pd_result || ''} onValueChange={(v) => onUpdate(index, 'pd_result', v)}>
+              <SelectTrigger data-testid={`pd-result-${index}`}><SelectValue placeholder="Select result" /></SelectTrigger>
+              <SelectContent><SelectItem value="pregnant">Pregnant / positive</SelectItem><SelectItem value="open">Open / not pregnant</SelectItem></SelectContent>
+            </Select>
+          </div>
+          {event.pd_result === 'pregnant' && <div className="space-y-2"><Label>Months pregnant (optional)</Label>
+            <Input type="number" min="0" max="12" step="1" value={event.months_pregnant ?? ''} onChange={(e) => onUpdate(index, 'months_pregnant', e.target.value)} data-testid={`pd-months-${index}`} />
+          </div>}
+        </div>
+      )}
+      {['pd_test', 'service'].includes(eventType) && <p className="text-sm text-muted-foreground">Select female animal tags to update their reproductive records. This event does not change stock.</p>}
 
       {/* Death-specific fields */}
       {eventType === 'death' && (
@@ -624,6 +642,8 @@ export function blankEvent() {
     days_sick: '',
     attending_vet: '',
     abortion_stage: '',
+    pd_result: '',
+    months_pregnant: '',
     mother_tag: '',
     offspring_tags: '',
     offspring_rows: [{ has_tag: true, tag: '' }],
@@ -640,6 +660,7 @@ export function blankEvent() {
 // Pure version of the field-change rules (type/species changes reset dependent fields).
 export function applyEventChange(event, field, value) {
   const next = { ...event, [field]: value };
+  if (field === 'pd_result' && value === 'open') next.months_pregnant = '';
   if (field === 'category_id') next.category_auto_filled = false;
   if (field === 'event_type' || field === 'species') {
     // Tags are cleared or re-validated by these changes, so an auto-filled category no longer applies
@@ -647,7 +668,7 @@ export function applyEventChange(event, field, value) {
     next.category_auto_filled = false;
   }
   if (field === 'event_type') {
-    next.is_stock_event = value !== 'abortion';
+    next.is_stock_event = !['abortion', 'pd_test', 'service'].includes(value);
     const fieldsByType = {
       death: ['cause_of_death_id', 'cause_of_death', 'disease_id', 'days_sick', 'attending_vet'],
       birth: ['mother_tag', 'offspring_tags'],
@@ -655,6 +676,7 @@ export function applyEventChange(event, field, value) {
       gift_in: ['gift_party_name', 'gift_party_phone', 'gift_reason'],
       gift_out: ['gift_party_name', 'gift_party_phone', 'gift_reason'],
       abortion: ['abortion_stage', 'mother_tag'],
+      pd_test: ['pd_result', 'months_pregnant'],
     };
     const allowed = fieldsByType[value] || [];
     Object.values(fieldsByType).flat().forEach((key) => {
@@ -712,6 +734,8 @@ export function eventFromApi(e) {
     days_sick: str(e.days_sick),
     attending_vet: e.attending_vet || '',
     abortion_stage: e.abortion_stage || '',
+    pd_result: e.pd_result || '',
+    months_pregnant: str(e.months_pregnant),
     mother_tag: e.mother_tag || '',
     offspring_tags: e.offspring_tags || '',
     offspring_rows: rows,
@@ -727,6 +751,11 @@ export function eventFromApi(e) {
 
 // Returns an error message, or null when the event is valid.
 export function validateEvent(event) {
+  if (event.event_type === 'pd_test') {
+    if (!['pregnant', 'open'].includes(event.pd_result)) return 'Select a PD result';
+    const months = Number(event.months_pregnant);
+    if (event.pd_result === 'pregnant' && event.months_pregnant !== '' && (!Number.isInteger(months) || months < 0 || months > 12)) return 'Months pregnant must be a whole number from 0 to 12';
+  }
   if (event.event_type === 'birth') {
     const rows = event.offspring_rows || [];
     for (let r = 0; r < rows.length; r++) {
@@ -739,7 +768,7 @@ export function validateEvent(event) {
     if (!event.category_id) return 'Please select a category';
   } else if (event.event_type === 'category_change') {
     if (!event.from_category_id || !event.to_category_id) return 'Category change requires both source and destination categories';
-  } else if (event.event_type !== 'abortion') {
+  } else if (!['abortion', 'pd_test', 'service'].includes(event.event_type)) {
     if (!event.category_id) return 'Please select a category';
   }
   return null;
@@ -767,6 +796,8 @@ export function eventToCreatePayload(e) {
     days_sick: toInt(e.days_sick),
     attending_vet: e.attending_vet || null,
     abortion_stage: e.abortion_stage || null,
+    pd_result: e.event_type === 'pd_test' ? (e.pd_result || null) : null,
+    months_pregnant: e.event_type === 'pd_test' && e.pd_result === 'pregnant' && e.months_pregnant !== '' ? Number(e.months_pregnant) : null,
     mother_tag: e.mother_tag || null,
     offspring_tags: e.offspring_tags || null,
     buyer_name: e.buyer_name || null,
@@ -793,7 +824,10 @@ export function eventToUpdatePayload(e) {
     if (e[k]) payload[k] = parseInt(e[k], 10);
   });
   const type = e.event_type;
-  if (type === 'death') {
+  if (type === 'pd_test') {
+    payload.pd_result = e.pd_result;
+    payload.months_pregnant = e.pd_result === 'pregnant' && e.months_pregnant !== '' ? Number(e.months_pregnant) : null;
+  } else if (type === 'death') {
     payload.cause_of_death_id = toInt(e.cause_of_death_id);
     payload.cause_of_death = e.cause_of_death || '';
     payload.attending_vet = e.attending_vet || '';

@@ -250,3 +250,6 @@ export const getTransitionQueue = (params) => api.get('/animals/transition-queue
 export const confirmTransition = (animalId, data) => api.post(`/animals/${animalId}/confirm-transition`, data);
 export const bulkConfirmTransitions = (data) => api.post('/animals/bulk-confirm-transitions', data);
 export const getAnimalTransitionHistory = (animalId) => api.get(`/animals/${animalId}/transition-history`);
+
+// Paginated daily-log timeline; the original activity timeline helper is unchanged.
+export const getAnimalDailyLogTimeline = (animalId, params) => api.get(`/animals/${animalId}/daily-log-timeline`, { params });

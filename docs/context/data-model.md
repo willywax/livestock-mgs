@@ -261,9 +261,16 @@ Append-only log of animal moves; written by the event-to-register sync on TRANSF
 - `animals` uniqueness includes mutable location, and `registry_tag_id` is indexed but not unique (inert legacy column) (`backend/models.py:231`, `backend/models.py:240`); global identity enforcement requires reconciliation before any uniqueness change.
 - SQLEnum-backed user roles, species, event types, abortion stages, animal sex/acquisition/status, health event/scope require explicit PostgreSQL enum work if members change. Python enum edits alone are insufficient (`backend/models.py:9`).
 - `events.animal_tags/offspring_tags` CSV text, `farm_health_events.category_ids` JSON, Float costs, and integer sale_price require a parallel representation/backfill if normalized or made precise; no destructive conversion (`backend/models.py:159`, `backend/models.py:178`, `backend/models.py:284`).
-- Medium index candidates from actual reads: `events(daily_log_id)` for joins; `daily_logs(log_date)` for global range reports; `farm_health_events(location_id,event_type,species,event_date)` / next_due_date. Existing PK/UQ indexes are listed above; validate with query plans later (`backend/server.py:2014`, `backend/server.py:3658`).
+- Added 2026-11-10 (script `backend/migrations/add_perf_indexes.sql`, models `__table_args__`): animals `ix_animals_{location_id,category_id,reproductive_status,birth_date}`, `ix_animals_species_category_status (species, category_id, status)`, `ix_animals_location_status (location_id, status)`; `ix_daily_logs_log_date`; `ix_events_daily_log_id`, `ix_events_event_type`; `ix_repro_events_{event_type,event_date}`, `ix_repro_events_animal_date (animal_id, event_date)`; `ix_animal_identifiers_id_value`, `ix_animal_identifiers_type_value (id_type, id_value)`; `ix_category_transitions_date`; `ix_recon_entries_match_status`. Existing DBs get them only when the owner runs the SQL.
+- Remaining index candidates: `farm_health_events(location_id,event_type,species,event_date)` / next_due_date. Existing PK/UQ indexes are listed above; validate with query plans later (`backend/server.py:2014`, `backend/server.py:3658`).
 
 ## Category transitions (added 2026-11-10)
 - `category_transition_rules`: id, species, from_category_id, to_category_id_f, to_category_id_m (nullable FKs to categories), trigger_type (`TransitionTriggerType`: AGE|EVENT), trigger_age_months, trigger_event (e.g. `first_calving`), is_active, notes. Unique `(species, from_category_id, trigger_type)`. Seeded at startup (15 rows, only missing ones inserted; edited rules are never overwritten): youngest -> Achishwa Dume/Jike at 7 months, Achishwa Dume -> Dume Wadogo and Achishwa Jike -> Mitamba at 18 months, Mitamba -> Koo on `first_calving`. Cattle youngest = Ndama Dume/Jike; sheep and goats = Vichinda Dume/Jike.
 - `category_transitions`: id, animal_id (indexed), rule_id (nullable), from_category_id, to_category_id, transition_date, trigger (`age_7m`, `first_calving`, `manual`), notes, confirmed_by, created_at.
 - Additive only: two new tables and one new PG enum type; no existing table touched.
+
+### Daily-log reproductive sync (2026-11-10)
+Events now include nullable `pd_result` and `months_pregnant`, with enum additions
+`PD_TEST` and `SERVICE`. New `event_animal_links` supports multiple animals and
+roles per event, durable links after retagging, and reproductive replay after
+edits/deletion. See [operations and limitations](../DAILY_REPRODUCTIVE_SYNC.md).
