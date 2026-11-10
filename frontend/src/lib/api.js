@@ -239,3 +239,14 @@ export const deleteDeathCause = (id) => api.delete(`/death-causes/${id}`);
 export const getMortalityThresholds = () => api.get('/settings/mortality-thresholds');
 export const updateMortalityThresholds = (data) => api.put('/settings/mortality-thresholds', data);
 export const getMortalityReport = (params) => api.get('/reports/mortality', { params });
+
+// Current herd reproductive status board
+export const getReproductiveStatusBoard = (params) => api.get('/reproduction/status-board', { params });
+
+// Category transitions (rules, queue, confirmation, history)
+export const getTransitionRules = () => api.get('/admin/transition-rules');
+export const updateTransitionRule = (id, data) => api.put(`/admin/transition-rules/${id}`, data);
+export const getTransitionQueue = (params) => api.get('/animals/transition-queue', { params });
+export const confirmTransition = (animalId, data) => api.post(`/animals/${animalId}/confirm-transition`, data);
+export const bulkConfirmTransitions = (data) => api.post('/animals/bulk-confirm-transitions', data);
+export const getAnimalTransitionHistory = (animalId) => api.get(`/animals/${animalId}/transition-history`);

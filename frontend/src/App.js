@@ -17,6 +17,7 @@ import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import Animals from "./pages/Animals";
+import TransitionQueue from "./pages/TransitionQueue";
 import FarmHealth from "./pages/FarmHealth";
 import Reproduction from "./pages/Reproduction";
 import AnimalDetail from "./pages/AnimalDetail";
@@ -24,6 +25,8 @@ import RepeatBreeders from "./pages/RepeatBreeders";
 
 import Reconciliation from "./pages/Reconciliation";
 import MortalityDashboard from "./pages/MortalityDashboard";
+
+import ReproductiveStatusBoard from "./pages/ReproductiveStatusBoard";
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -123,6 +126,15 @@ function AppRoutes() {
       />
 
       <Route
+        path="/animals/transitions"
+        element={
+          <ProtectedRoute allowedRoles={["admin", "data_entry"]}>
+            <TransitionQueue />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
         path="/animals/:id"
         element={
           <ProtectedRoute>
@@ -215,6 +227,11 @@ function AppRoutes() {
       <Route path="/reconciliation" element={<ProtectedRoute><Reconciliation /></ProtectedRoute>} />
 
       <Route path="/reports/mortality" element={<ProtectedRoute><MortalityDashboard /></ProtectedRoute>} />
+
+      <Route path="/reproduction/status" element={<ProtectedRoute><ReproductiveStatusBoard /></ProtectedRoute>} />
+      <Route path="/repeat-breeders" element={<Navigate to="/animals/repeat-breeders" replace />} />
+      <Route path="/mortality" element={<Navigate to="/reports/mortality" replace />} />
+      <Route path="/users" element={<Navigate to="/admin/users" replace />} />
 
       {/* Catch all - redirect to dashboard */}
       <Route path="*" element={<Navigate to="/" replace />} />

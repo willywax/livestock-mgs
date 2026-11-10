@@ -54,7 +54,7 @@ Animal-register sync (decision 0009): `POST /api/daily-logs` (events embedded; s
 | GET | `/api/reports/analytics` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get analytics report | path/query only -> AnalyticsResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:1990` |
 | GET | `/api/reports/detailed` | JWT ADMIN,DATA_ENTRY,VIEWER (closed 2026-11-08) | get detailed report | path/query only -> DetailedReportResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:2508` |
 | GET | `/api/templates/animals` | Public | download animals template | path/query only -> CSV StreamingResponse (no model) | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:2992` |
-| GET | `/api/animals` | JWT active user | list animals (optional `is_temp_tag=true|false` filter; omitted = no filter) | path/query only -> List[AnimalResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3039` |
+| GET | `/api/animals` | JWT active user | list animals (optional `is_temp_tag=true|false` filter; omitted = no filter); `AnimalResponse` includes read-only `last_calving_date` | path/query only -> List[AnimalResponse] | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3039` |
 | POST | `/api/animals` | JWT ADMIN,DATA_ENTRY | create animal | AnimalCreate -> AnimalResponse | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3071` |
 | POST | `/api/animals/bulk-import` | JWT ADMIN | bulk import animals | UploadFile -> BulkImportResult | Shamba UI via frontend/src/lib/api.js:5 | `backend/server.py:3118` |
 | GET | `/api/animals/register-reconciliation` | JWT ADMIN,DATA_ENTRY,VIEWER | per location+species: stock_levels total vs registered active animals (`registered_pct` null when stock is 0; `unregistered` may be negative) | none -> List[ReconciliationRow] | Animals.jsx (Register completeness panel), Dashboard.jsx (Animal register card) | `backend/server.py` (register_reconciliation) |
@@ -116,3 +116,22 @@ All in `backend/server.py` (block "REPRODUCTION & ANIMAL PROFILE", registered be
 - Active-user verification and role factory: `backend/auth.py:37`, `backend/auth.py:67`.
 - Resolved 2026-11-08: unauthenticated business reads were closed (see the note at the top). Remaining public routes: health, login, three CSV templates.
 - Low: generated API/client comments can lag actual roles: add-event is ADMIN, update-event allows ADMIN/DATA_ENTRY, lock allows ADMIN/VIEWER (`backend/server.py:1071`, `backend/server.py:1266`, `backend/server.py:1179`).
+
+## Reproductive status board (2026-11-10)
+`GET /api/reproduction/status-board?farm_id=<location-id>&species=cattle|sheep|goat` is available to ADMIN, DATA_ENTRY and VIEWER. No database writes or schema changes. Only active female animals are included.
+
+Response: `summary {total_breeding_females, status_known_pct}` plus nine `{label, count, animals}` buckets: `open`, `pregnant`, `close_to_calving`, `due_this_month`, `recently_calved`, `recently_aborted`, `repeat_breeders`, `unknown_status`, `needs_attention`. Animal rows expose `id`, `tag_number`, `species`, `category`, `farm`, `age_months`, `reproductive_status`, `last_event_date`, `last_event_type`, `last_pd_date`, `last_calving_date`, `months_pregnant`, `services_without_conception`, `expected_calving_date`.
+
+Both due buckets use the inclusive interval today through today + 30 days. Estimate = last PD date + species gestation days - months pregnant * 30, only for pregnant animals with both inputs. Gestations: cattle 283, sheep 147, goats 150. Recent calving/abortion windows are inclusive today - 30 through today. Future events are excluded from recent history. Needs attention includes breeding-age unknown status, pregnant with PD strictly older than 180 days, or >= 3 services. Unknown status holds younger females or those without a birth date. Breeding ages: cattle 24 months, sheep/goats 18; completed calendar months. Summary percentage considers only breeding-age females, returns 0 for no denominator. Dates use UTC+03:00. Buckets overlap, and repeated abortions never duplicate an animal in a bucket.
+
+### Category transitions (added 2026-11-10)
+| Method | Path | Auth | Purpose | Source |
+|---|---|---|---|---|
+| GET | `/api/admin/transition-rules` | JWT ADMIN,DATA_ENTRY,VIEWER | list rules with category names | `backend/server.py` (list_transition_rules) |
+| PUT | `/api/admin/transition-rules/{rule_id}` | JWT ADMIN | edit age / target categories / is_active (400 on wrong species, age on an event rule) | update_transition_rule |
+| POST | `/api/admin/tasks/sync-category-transitions` | JWT ADMIN | same pending queue as below; no writes | sync_category_transitions |
+| GET | `/api/animals/transition-queue` | JWT ADMIN,DATA_ENTRY,VIEWER | active animals past an age rule's threshold (`species`, `location_id` filters); no writes. Declared above `/animals/{animal_id}` on purpose | get_transition_queue |
+| POST | `/api/animals/{animal_id}/confirm-transition` | JWT ADMIN,DATA_ENTRY | `{to_category_id, notes?}`: changes the category and moves 1 head of `stock_levels` in one transaction. 400 not active / same category / wrong species; 409 source stock is 0 | confirm_transition |
+| POST | `/api/animals/bulk-confirm-transitions` | JWT ADMIN,DATA_ENTRY | per-animal result, partial success persists | bulk_confirm_transitions |
+| GET | `/api/animals/{animal_id}/transition-history` | JWT ADMIN,DATA_ENTRY,VIEWER | audit rows, newest first | get_transition_history |
+Also: recording a `calving` reproductive event (`POST /api/animals/{id}/reproductive-events`) auto-confirms the first-calving rule (Mitamba -> Koo). Best-effort: if it fails (e.g. stock 0) the calving still saves and a warning is logged.

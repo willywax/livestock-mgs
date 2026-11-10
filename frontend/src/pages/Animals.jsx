@@ -50,6 +50,17 @@ const DEFAULT_FORM = {
   notes: '',
 };
 
+// CSV cell: always quoted; a leading = + - @ gets a ' prefix so spreadsheets do not run it as a formula.
+function csvCell(value) {
+  let s = value === null || value === undefined ? '' : String(value);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+function slugify(text) {
+  return String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'farm';
+}
+
 function SpeciesBadge({ species }) {
   const cfg = SPECIES_CONFIG[species] || {};
   return (
@@ -185,6 +196,7 @@ function Animals() {
 
   const [filterSpecies, setFilterSpecies] = useState('all');
   const [filterReproductive, setFilterReproductive] = useState('all');
+  const [filterSex, setFilterSex] = useState('all');
   const [filterLocation, setFilterLocation] = useState('all');
   const [filterStatus, setFilterStatus] = useState('active');
   const [filterTempOnly, setFilterTempOnly] = useState(false);
@@ -313,6 +325,7 @@ function Animals() {
   const filteredAnimals = animals.filter(function (a) {
     if (filterReproductive !== 'all' && (a.reproductive_status || 'unknown') !== filterReproductive) return false;
     if (filterSpecies !== 'all' && a.species !== filterSpecies) return false;
+    if (filterSex !== 'all' && a.sex !== filterSex) return false;
     if (filterLocation !== 'all' && a.location_id !== parseInt(filterLocation)) return false;
     if (filterStatus !== 'all' && a.status !== filterStatus) return false;
     if (search.trim()) {
@@ -322,14 +335,42 @@ function Animals() {
     return true;
   });
 
-  const animalWord = filteredAnimals.length === 1 ? 'animal' : 'animals';
-  const statusSuffix = filterStatus === 'active' ? ' (active)'
-    : filterStatus === 'all' ? ' (all statuses)' : ` (${filterStatus})`;
-  let countLabel;
-  if (filterTempOnly) countLabel = `${filteredAnimals.length} temp-tagged ${animalWord}${statusSuffix}`;
-  else if (filterStatus === 'active') countLabel = `${filteredAnimals.length} active ${animalWord}`;
-  else if (filterStatus === 'all') countLabel = `${filteredAnimals.length} ${animalWord} (all statuses)`;
-  else countLabel = `${filteredAnimals.length} ${filterStatus} ${animalWord}`;
+  // "X animals" for the default view, "X of Y animals" once any filter narrows it.
+  // Baseline Y: the default (active) view, or every loaded animal when the status filter was changed.
+  const baselineCount = filterStatus === 'active'
+    ? animals.filter(function (a) { return a.status === 'active'; }).length
+    : animals.length;
+  const isFiltered = filterSpecies !== 'all' || filterReproductive !== 'all' || filterLocation !== 'all'
+    || filterSex !== 'all' || filterStatus !== 'active' || filterTempOnly || search.trim() !== '';
+  const animalWord = (isFiltered ? baselineCount : filteredAnimals.length) === 1 ? 'animal' : 'animals';
+  const countLabel = isFiltered
+    ? `${filteredAnimals.length} of ${baselineCount} ${animalWord}`
+    : `${filteredAnimals.length} ${animalWord}`;
+
+  function handleExportCsv() {
+    const header = ['tag_number', 'species', 'category', 'sex', 'farm', 'status', 'date_of_birth',
+      'acquisition_date', 'reproductive_status', 'last_calving_date'];
+    const rows = filteredAnimals.map(function (a) {
+      return [a.tag_number, a.species, a.category_name_sw || a.category_name_en || '', a.sex,
+        a.location_name || '', a.status, a.birth_date || '', a.acquisition_date || '',
+        a.reproductive_status || '', a.last_calving_date || ''];
+    });
+    const csv = [header].concat(rows).map(function (row) {
+      return row.map(csvCell).join(',');
+    }).join('\r\n');
+    const farm = filterLocation === 'all'
+      ? 'all-farms'
+      : slugify((locations.find(function (l) { return String(l.id) === filterLocation; }) || {}).name || 'farm');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `animals-${farm}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
 
   const formCategories = categories.filter(function (c) { return c.species === formData.species; });
 
@@ -483,6 +524,18 @@ function Animals() {
           <p className="text-sm font-medium mt-1" data-testid="animals-count">{countLabel}</p>
         </div>
         <div className="flex gap-2">
+          {(isAdmin || isDataEntry) && (
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleExportCsv}
+              disabled={filteredAnimals.length === 0}
+              data-testid="export-csv-btn"
+            >
+              <DownloadSimple className="h-4 w-4" />
+              Export CSV
+            </Button>
+          )}
           {isAdmin && (
             <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
               <Button
@@ -526,6 +579,17 @@ function Animals() {
             <SelectItem value="cattle">Cattle</SelectItem>
             <SelectItem value="sheep">Sheep</SelectItem>
             <SelectItem value="goat">Goat</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={filterSex} onValueChange={setFilterSex}>
+          <SelectTrigger className="w-36" aria-label="Sex" data-testid="sex-filter">
+            <span className="mr-1 text-muted-foreground">Sex:</span><SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="male">Male ♂</SelectItem>
+            <SelectItem value="female">Female ♀</SelectItem>
           </SelectContent>
         </Select>
 
@@ -635,9 +699,6 @@ function Animals() {
               </Table>
             </CardContent>
           </Card>
-          <p className="text-sm text-muted-foreground">
-            Showing {filteredAnimals.length} of {animals.length} animal{animals.length !== 1 ? 's' : ''}
-          </p>
         </>
       ) : (
         <Card className="border-border/60">

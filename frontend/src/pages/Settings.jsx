@@ -22,6 +22,9 @@ import { toast } from 'sonner';
 import { SPECIES_CONFIG } from '../lib/utils';
 import { importAnimalIdentifiers } from '../lib/api';
 import { importPDTests } from '../lib/api';
+import { getTransitionRules, updateTransitionRule } from '../lib/api';
+import { Switch } from '../components/ui/switch';
+import { Lock } from '@phosphor-icons/react';
 import { listDeathCauses, createDeathCause, updateDeathCause, deleteDeathCause, getMortalityThresholds, updateMortalityThresholds } from '../lib/api';
 
 function IdentifierImportCard() {
@@ -592,6 +595,7 @@ function Settings() {
       </Dialog>
       {isAdmin && <DeathCauseSettings />}
       {isAdmin && <MortalityThresholdSettings />}
+      <TransitionRulesSettings isAdmin={isAdmin} />
     </div>
   );
 }
@@ -772,4 +776,127 @@ function MortalityThresholdSettings() {
       </fieldset>
     </form></CardContent>
   </Card>;
+}
+
+function TransitionRuleRow({ rule, isAdmin, onSaved }) {
+  const isEvent = rule.trigger_type === 'event';
+  const original = rule.trigger_age_months == null ? '' : String(rule.trigger_age_months);
+  const [age, setAge] = useState(original);
+  const [active, setActive] = useState(rule.is_active);
+  const [busy, setBusy] = useState(false);
+  const ageNum = parseInt(age, 10);
+  const ageValid = isEvent || (Number.isInteger(ageNum) && ageNum >= 1 && ageNum <= 240 && String(ageNum) === age.trim());
+  const dirty = !isEvent && (age !== original || active !== rule.is_active);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await updateTransitionRule(rule.id, { trigger_age_months: ageNum, is_active: active });
+      toast.success('Transition rule saved');
+      onSaved();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to save rule');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <tr className="border-b last:border-0" data-testid={`transition-rule-${rule.id}`}>
+      <td className="py-2 pr-3 font-medium">{rule.from_category_name}</td>
+      <td className="py-2 pr-3">{rule.to_category_name_f || '—'}</td>
+      <td className="py-2 pr-3">{rule.to_category_name_m || '—'}</td>
+      {isEvent ? (
+        <td className="py-2 pr-3 text-sm text-muted-foreground" colSpan={4}>
+          <span className="inline-flex items-center gap-1.5">
+            <Lock className="h-4 w-4" aria-hidden="true" />
+            Triggered by {(rule.trigger_event || 'event').replace(/_/g, ' ')}
+          </span>
+        </td>
+      ) : (
+        <>
+          <td className="py-2 pr-3 text-sm text-muted-foreground">Age</td>
+          <td className="py-2 pr-3">
+            <div className="flex items-center gap-1">
+              <Input
+                type="number" min="1" max="240" className="h-8 w-20"
+                value={age} onChange={(e) => setAge(e.target.value)}
+                disabled={!isAdmin} aria-label={`Age threshold in months for ${rule.from_category_name}`}
+              />
+              <span className="text-xs text-muted-foreground">months</span>
+            </div>
+          </td>
+          <td className="py-2 pr-3">
+            <Switch checked={active} onCheckedChange={setActive} disabled={!isAdmin} aria-label={`Active: ${rule.from_category_name}`} />
+          </td>
+          <td className="py-2">
+            {isAdmin && (
+              <Button size="sm" onClick={save} disabled={!dirty || !ageValid || busy}>
+                {busy ? 'Saving...' : 'Save'}
+              </Button>
+            )}
+          </td>
+        </>
+      )}
+    </tr>
+  );
+}
+
+function TransitionRulesSettings({ isAdmin }) {
+  const [rules, setRules] = useState(null);
+  const [error, setError] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    getTransitionRules()
+      .then((res) => { if (!cancelled) { setRules(res.data); setError(false); } })
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [refresh]);
+
+  return (
+    <Card className="border-border/60" data-testid="transition-rules-card">
+      <CardHeader>
+        <CardTitle className="font-heading">Category Transition Rules</CardTitle>
+        <CardDescription>
+          When animals become due to move to their next category. {isAdmin ? 'Edit the age thresholds here.' : 'Only an admin can change these.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {error && <p className="text-sm text-red-600">Could not load the transition rules.</p>}
+        {!rules && !error && <p className="text-sm text-muted-foreground">Loading...</p>}
+        {rules && ['cattle', 'sheep', 'goat'].map((sp) => {
+          const rows = rules.filter((r) => r.species === sp);
+          if (rows.length === 0) return null;
+          return (
+            <div key={sp} className="overflow-x-auto">
+              <h3 className="mb-2 font-heading font-semibold capitalize">{sp}</h3>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="py-1 pr-3 font-medium">From</th>
+                    <th className="py-1 pr-3 font-medium">To (F)</th>
+                    <th className="py-1 pr-3 font-medium">To (M)</th>
+                    <th className="py-1 pr-3 font-medium">Trigger</th>
+                    <th className="py-1 pr-3 font-medium">Age threshold</th>
+                    <th className="py-1 pr-3 font-medium">Active</th>
+                    <th className="py-1" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((rule) => (
+                    <TransitionRuleRow
+                      key={`${rule.id}-${rule.trigger_age_months}-${rule.is_active}`}
+                      rule={rule} isAdmin={isAdmin} onSaved={() => setRefresh((n) => n + 1)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
 }

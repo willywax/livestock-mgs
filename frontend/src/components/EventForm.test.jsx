@@ -24,3 +24,19 @@ test('a sale changed to abortion excludes sale fields and disables stock', () =>
   expect(eventToCreatePayload(form)).toMatchObject({ is_stock_event: false, buyer_name: null, sale_price: null });
   expect(eventToUpdatePayload(form)).not.toHaveProperty('buyer_name');
 });
+
+test('an auto-filled category is released when event type or species changes, but a manual one is kept', () => {
+  const auto = { ...blankEvent(), event_type: 'sold', category_id: '7', category_auto_filled: true };
+  expect(applyEventChange(auto, 'species', 'goat')).toMatchObject({ category_id: '', category_auto_filled: false });
+  expect(applyEventChange(auto, 'event_type', 'death')).toMatchObject({ category_id: '', category_auto_filled: false });
+  const manual = { ...blankEvent(), event_type: 'sold', category_id: '7' };
+  expect(applyEventChange(manual, 'event_type', 'death').category_id).toBe('7');
+});
+
+test('overriding the category by hand clears the auto-filled flag and it never reaches the payload', () => {
+  const auto = { ...blankEvent(), event_type: 'sold', category_id: '7', category_auto_filled: true };
+  const next = applyEventChange(auto, 'category_id', '9');
+  expect(next).toMatchObject({ category_id: '9', category_auto_filled: false });
+  expect(eventToCreatePayload(auto)).not.toHaveProperty('category_auto_filled');
+  expect(eventToUpdatePayload(auto)).not.toHaveProperty('category_auto_filled');
+});

@@ -14,6 +14,7 @@ Legacy: table `registry_sync_outbox` still exists in existing databases but has 
 - `events.animal_tags` / `offspring_tags` / `mother_tag` are plain comma-separated text.
 - Enums are native PostgreSQL enums. The database stores the uppercase member NAMES (e.g. `ADMIN`, `LIVE_CALF`); Python/API values are lowercase.
 - Reproduction: one `reproductive_cycles` row per service/pregnancy/calving of a FEMALE animal (`cycle_number` per animal); `calving_interval_days`/`days_to_service` are derived from the previous calved cycle; bull assignments reference a MALE animal. Photos store only a GCS object path.
+- Category transitions: `category_transition_rules` (per species and source category: target category for females/males, trigger `age` + `trigger_age_months` or `event` + `trigger_event`; unique on species, source, trigger type) and `category_transitions` (audit log of each confirmed change). Both are new tables created by `create_all`; the trigger enum is a new native PG enum (stored as `AGE`/`EVENT`). No existing table changed.
 
 ## Migration rules (current policy)
 - Only nullable `ADD COLUMN IF NOT EXISTS`, and new tables after review. Never drop/rename/retype/tighten.

@@ -164,12 +164,28 @@ export function EventFormItem({ event, index, categories, locations, diseases, l
   const logLocation = locations.find(function(l) { return String(l.id) === String(locationId); });
   // Animals being transferred live at the source location; otherwise the log's location.
   const pickerLocationId = eventType === 'transfer' ? (event.from_location_id || locationId) : locationId;
-  const pickerCategoryId = eventType === 'category_change' ? event.from_category_id : event.category_id;
+  // An auto-filled category must not narrow the picker, or animals of other categories could not be added.
+  const pickerCategoryId = eventType === 'category_change'
+    ? event.from_category_id
+    : (event.category_auto_filled ? '' : event.category_id);
+  const autoFilled = Boolean(event.category_auto_filled);
 
   // Picking animals fills Count with the number picked (still editable afterwards).
   function handlePickedTags(next) {
     const n = parseTags(next).length;
     onPatch(index, n > 0 ? { animal_tags: next, count: n } : { animal_tags: next });
+  }
+
+  // Picked animals that all share one category fill (and lock) the Category field.
+  // Mixed categories or an empty selection release an auto-filled value; a manual choice is left alone.
+  function handleAnimalsPicked(picked) {
+    if (eventType === 'category_change' || eventType === 'abortion') return;
+    const ids = Array.from(new Set(picked.map(function(a) { return a.category_id; })));
+    if (ids.length === 1) {
+      onPatch(index, { category_id: String(ids[0]), category_auto_filled: true });
+    } else if (autoFilled) {
+      onPatch(index, { category_id: '', category_auto_filled: false });
+    }
   }
   return (
     <div className="p-4 rounded-lg border border-border bg-muted/30 space-y-4" data-testid={`event-${index}`}>
@@ -234,6 +250,7 @@ export function EventFormItem({ event, index, categories, locations, diseases, l
             categoryId={pickerCategoryId}
             value={event.animal_tags || ''}
             onChange={handlePickedTags}
+            onAnimalsPicked={handleAnimalsPicked}
             testId={`tags-${index}`}
             status={pickerStatus}
           />
@@ -252,10 +269,28 @@ export function EventFormItem({ event, index, categories, locations, diseases, l
 
       {eventType !== 'category_change' && eventType !== 'abortion' && (
         <div className="space-y-2">
-          <Label>Category</Label>
-          <Select 
-            value={event.category_id?.toString() || ''} 
+          <div className="flex items-center gap-2">
+            <Label>Category</Label>
+            {autoFilled && (
+              <>
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0" data-testid={`category-auto-badge-${index}`}>
+                  auto-filled
+                </Badge>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline"
+                  onClick={() => onPatch(index, { category_auto_filled: false })}
+                  data-testid={`category-override-${index}`}
+                >
+                  Override
+                </button>
+              </>
+            )}
+          </div>
+          <Select
+            value={event.category_id?.toString() || ''}
             onValueChange={(v) => onUpdate(index, 'category_id', v)}
+            disabled={autoFilled}
           >
             <SelectTrigger data-testid={`category-${index}`}>
               <SelectValue placeholder="Select category" />
@@ -574,6 +609,7 @@ export function blankEvent() {
     event_type: 'birth',
     species: 'cattle',
     category_id: '',
+    category_auto_filled: false,
     count: 1,
     from_location_id: '',
     to_location_id: '',
@@ -604,6 +640,12 @@ export function blankEvent() {
 // Pure version of the field-change rules (type/species changes reset dependent fields).
 export function applyEventChange(event, field, value) {
   const next = { ...event, [field]: value };
+  if (field === 'category_id') next.category_auto_filled = false;
+  if (field === 'event_type' || field === 'species') {
+    // Tags are cleared or re-validated by these changes, so an auto-filled category no longer applies
+    if (next.category_auto_filled) next.category_id = '';
+    next.category_auto_filled = false;
+  }
   if (field === 'event_type') {
     next.is_stock_event = value !== 'abortion';
     const fieldsByType = {

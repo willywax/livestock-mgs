@@ -22,6 +22,9 @@ import { EVENT_TYPES, SPECIES_CONFIG, formatDate, formatDateTime } from '../lib/
 import { format } from 'date-fns';
 import { EventFormItem, blankEvent, applyEventChange, eventFromApi, validateEvent, eventToCreatePayload, eventToUpdatePayload } from '../components/EventForm';
 
+// Event types with their own detail block in the event sheet; every other type uses the generic block.
+const typeSpecificTypes = ['death', 'birth', 'sold', 'gift_in', 'gift_out'];
+
 const DailyLogDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();

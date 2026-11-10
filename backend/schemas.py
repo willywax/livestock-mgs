@@ -504,6 +504,7 @@ class AnimalResponse(BaseModel):
     registry_tag_id: Optional[str] = None
     is_temp_tag: bool = False
     reproductive_status: str = "unknown"
+    last_calving_date: Optional[date] = None
 
 class BulkImportResult(BaseModel):
     created: int
@@ -1215,3 +1216,126 @@ class MortalityReportResponse(BaseModel):
     by_cause: List[MortalityByCause]
     by_month: List[MortalityByMonth]
     flagged: List[MortalityByFarm]
+
+
+class StatusBoardAnimal(BaseModel):
+    id: int
+    tag_number: str
+    species: SpeciesType
+    category: str
+    farm: str
+    age_months: Optional[int]
+    reproductive_status: str
+    last_event_date: Optional[date]
+    last_event_type: Optional[ReproductiveEventType]
+    last_pd_date: Optional[date]
+    last_calving_date: Optional[date]
+    months_pregnant: Optional[int]
+    services_without_conception: int
+    expected_calving_date: Optional[date]
+
+
+class StatusBoardBucket(BaseModel):
+    label: str
+    count: int
+    animals: List[StatusBoardAnimal]
+
+
+class StatusBoardSummary(BaseModel):
+    total_breeding_females: int
+    status_known_pct: float
+
+
+class ReproductiveStatusBoardResponse(BaseModel):
+    summary: StatusBoardSummary
+    open: StatusBoardBucket
+    pregnant: StatusBoardBucket
+    close_to_calving: StatusBoardBucket
+    due_this_month: StatusBoardBucket
+    recently_calved: StatusBoardBucket
+    recently_aborted: StatusBoardBucket
+    repeat_breeders: StatusBoardBucket
+    unknown_status: StatusBoardBucket
+    needs_attention: StatusBoardBucket
+
+
+# ---------- Category transitions ----------
+class CategoryTransitionRuleResponse(BaseModel):
+    id: int
+    species: SpeciesType
+    from_category_id: int
+    from_category_name: str
+    to_category_id_f: Optional[int] = None
+    to_category_name_f: Optional[str] = None
+    to_category_id_m: Optional[int] = None
+    to_category_name_m: Optional[str] = None
+    trigger_type: str
+    trigger_age_months: Optional[int] = None
+    trigger_event: Optional[str] = None
+    is_active: bool
+    notes: Optional[str] = None
+
+
+class CategoryTransitionRuleUpdate(BaseModel):
+    trigger_age_months: Optional[int] = Field(default=None, ge=1, le=240)
+    to_category_id_f: Optional[int] = None
+    to_category_id_m: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class TransitionQueueItem(BaseModel):
+    animal_id: int
+    tag_number: str
+    species: SpeciesType
+    current_category: str
+    to_category_id: int
+    to_category: str  # the female or male target, by the animal's sex
+    age_months: int
+    location_name: Optional[str] = None
+    rule_id: int
+    trigger: str
+
+
+class TransitionQueueResponse(BaseModel):
+    pending: List[TransitionQueueItem]
+    total: int
+
+
+class ConfirmTransitionRequest(BaseModel):
+    to_category_id: int
+    notes: Optional[str] = None
+
+
+class BulkTransitionItem(BaseModel):
+    animal_id: int
+    to_category_id: int
+
+
+class BulkConfirmRequest(BaseModel):
+    transitions: List[BulkTransitionItem] = Field(min_length=1, max_length=200)
+    notes: Optional[str] = None
+
+
+class CategoryTransitionResponse(BaseModel):
+    id: int
+    animal_id: int
+    tag_number: str
+    from_category: str
+    to_category: str
+    transition_date: date
+    trigger: Optional[str] = None
+    notes: Optional[str] = None
+    confirmed_by_name: Optional[str] = None
+
+
+class BulkConfirmResult(BaseModel):
+    animal_id: int
+    success: bool
+    transition: Optional[CategoryTransitionResponse] = None
+    error: Optional[str] = None
+
+
+class BulkConfirmResponse(BaseModel):
+    results: List[BulkConfirmResult]
+    succeeded: int
+    failed: int

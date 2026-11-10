@@ -34,6 +34,7 @@ function AnimalTagPicker({
   maxSelect,
   testId,
   status = 'active',
+  onAnimalsPicked,
 }) {
   const [animals, setAnimals] = useState(null); // null while loading
   const [failed, setFailed] = useState(false);
@@ -90,6 +91,10 @@ function AnimalTagPicker({
 
   function emit(next) {
     onChange(next.join(', '));
+    // Report the full animal records for the new selection (already loaded: no extra request)
+    if (onAnimalsPicked) {
+      onAnimalsPicked(animals.filter(function (a) { return next.includes(a.tag_number); }));
+    }
   }
 
   function toggle(tag) {

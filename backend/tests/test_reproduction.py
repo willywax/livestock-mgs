@@ -352,3 +352,16 @@ async def test_reproduction_analytics_scoping_and_fallback(client, db_session):
     assert {loc["location_name"] for loc in both["by_location"]} == {"Test Farm", "Empty Farm"}
     assert (await get("")).json()["year"] == date.today().year
     assert (await get("year=1900")).status_code == 422
+
+
+async def test_animal_list_exposes_last_calving_date(client, db_session):
+    animal_id = await make_animal(db_session, "CALV-1")
+    animal = await db_session.get(Animal, animal_id)
+    animal.last_calving_date = date(2026, 3, 4)
+    await db_session.commit()
+    rows = (await client.get("/api/animals", headers=auth("viewer"))).json()
+    row = next(r for r in rows if r["tag_number"] == "CALV-1")
+    assert row["last_calving_date"] == "2026-03-04"
+    other = await make_animal(db_session, "CALV-2")
+    rows = (await client.get("/api/animals", headers=auth("viewer"))).json()
+    assert next(r for r in rows if r["id"] == other)["last_calving_date"] is None

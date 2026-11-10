@@ -35,3 +35,18 @@ Concurrency (K07) and deployment state were assessed from source only.
 - K12 (Death/sale outbox uses only the first tag of a comma-separated list): removed with the Registry integration, commit on `chore/remove-registry`.
 - K13 (Registry alias drops sex; `Dume Mbegu` vs `MBEGU` not mapped): removed with the Registry integration, commit on `chore/remove-registry`.
 - 2026-11-08: `.env`, `shamba.db`, `*.log` untracked and ignored (commit on `chore/claude-setup`); credential rotation still required (K01).
+
+## Status-board navigation follow-up (2026-11-10)
+The requested navigation includes future routes `/stock`, `/reports/sales`, and `/customers`; their frontend pages are not implemented (`/animals/transitions` was implemented 2026-11-10 as the Transition Queue page). The existing catch-all redirects unknown paths to Dashboard. These links are intentionally included per the approved scope. No placeholder product pages were added. Status-board checks cover SQLite and React DOM mocks; interactive browser workflows and production deployment have not been performed for this feature.
+
+## Animal register CSV export: last_calving_date (2026-11-10) - resolved
+`AnimalResponse` now includes an additive read-only `last_calving_date` (from `animals.last_calving_date`, no schema change), so the Animals page "Export CSV" fills that column. Covered by `test_animal_list_exposes_last_calving_date`. Also fixed in the same change: `DailyLogDetail.jsx` referenced an undefined `typeSpecificTypes`, which crashed the page when an event's eye icon was clicked.
+
+## Category transitions (2026-11-10)
+- The first-calving hook runs only for the standalone reproductive-events route. Calvings recorded through reproductive cycles (`_sync_cycle_calving_status`) or the PD/import path do not trigger it; use the queue/confirm routes manually for those animals.
+- A failed first-calving transition (for example source stock is 0) is only logged; the animal stays a heifer until someone confirms it manually.
+- `stock_levels` has no row lock. The transition decrement is a single guarded `UPDATE ... WHERE current_count >= 1` (not a read-modify-write), so it cannot go negative, but it can still interleave with event-based stock edits.
+- Transitions change stock directly and create no event row, so event-derived reports will not show them. Staff must not duplicate a transition with a `category_change` event.
+- Sheep and goat age thresholds reuse the cattle values (7 and 18 months); tune via `PUT /api/admin/transition-rules/{id}`.
+- No frontend for the queue yet; the routes are API-only. Postgres enum creation, `FOR UPDATE`, and the savepoint race path were verified by reading code only (tests use SQLite).
+- Transition Queue UI (2026-11-10): the queue API has no sex, birth date or threshold, so the page derives sex from the rule's female/male target and shows whole "months overdue" (0 = due now, 1-2 amber, 3+ red), not days. First-calving rules are shown read-only in Settings (the API still allows toggling them). There is no undo for a confirmed transition. The page, the Settings rules table and the animal "Category history" section were checked by build and helper unit tests only, not in a browser.

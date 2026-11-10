@@ -21,3 +21,6 @@ Removed from the roadmap 2026-11-08 (obsolete after the Registry integration was
 ## Housekeeping (S)
 Delete stale root files (K17), trim unused dependencies after import audit (K16), rewrite README.
 Done 2026-11-08: Animal detail page `/animals/:id` (branch `ft/animal-detail`).
+
+## Status board delivery (2026-11-10)
+Implemented the nine-bucket reproductive status board and collapsible sidebar groups. Remaining navigation work: implement Transition Queue, Stock Overview, Sales Report and Customers frontend pages at their requested routes. Existing links and role restrictions are retained. No deployment is included in this change.

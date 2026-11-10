@@ -32,8 +32,10 @@ from models import (
     AnimalLocationHistory,
     AnimalIdentifier, AnimalIdentifierType, ReproductiveEvent, ReproductiveEventType,
     ReconciliationSession, ReconciliationEntry, Customer, SaleDetail, DeathCause, MortalityThreshold,
+    CategoryTransitionRule, CategoryTransition, TransitionTriggerType,
 )
 from schemas import (
+    ReproductiveStatusBoardResponse,
     UserLogin, UserCreate, UserUpdate, UserResponse, TokenResponse,
     LocationCreate, LocationUpdate, LocationResponse,
     CategoryResponse,
@@ -68,6 +70,9 @@ from schemas import (
     MortalityThresholdUpdate, MortalityThresholdResponse, MortalityReportResponse,
     CustomerCreate, CustomerUpdate, CustomerResponse, CustomerDetailResponse,
     SaleDetailCreate, SaleDetailResponse, SalesLineItem, SalesReportResponse,
+    CategoryTransitionRuleResponse, CategoryTransitionRuleUpdate, TransitionQueueItem, TransitionQueueResponse,
+    ConfirmTransitionRequest, BulkTransitionItem, BulkConfirmRequest, BulkConfirmResult, BulkConfirmResponse,
+    CategoryTransitionResponse,
 )
 from auth import (
     verify_password, get_password_hash, create_access_token,
@@ -197,6 +202,14 @@ async def startup():
             db.add_all(seed_vaccines)
             await db.commit()
             logger.info("Seeded vaccine types")
+
+        try:
+            added = await _seed_category_transition_rules(db)
+            if added:
+                logger.info("Seeded %d category transition rules", added)
+        except Exception:
+            await db.rollback()
+            logger.exception("Category transition rule seeding failed")
 
         break
 
@@ -3369,6 +3382,7 @@ def _animal_response(animal: Animal) -> AnimalResponse:
         registry_tag_id=animal.registry_tag_id,
         is_temp_tag=bool(animal.is_temp_tag),
         reproductive_status=animal.reproductive_status or "unknown",
+        last_calving_date=animal.last_calving_date,
     )
 
 @api_router.get("/templates/animals")
@@ -3702,6 +3716,370 @@ async def list_repeat_breeders(
              "services_without_conception": animal.services_without_conception,
              "last_pd_date": animal.last_pd_date, "reproductive_status": animal.reproductive_status}
             for animal, name in rows]
+
+
+# ---------- Category transitions ----------
+# Rules say when an animal is due to move to its next category (by age, or on first calving). Confirming a
+# transition changes animals.category_id AND moves one head between stock_levels rows in the same transaction.
+# It writes no Event row, so staff must not also log a category_change event for the same move.
+_TRANSITION_SEED_CHAIN = {
+    # species: (youngest male category, youngest female category)
+    SpeciesType.CATTLE: ("Ndama Dume", "Ndama Jike"),
+    SpeciesType.SHEEP: ("Vichinda Dume", "Vichinda Jike"),
+    SpeciesType.GOAT: ("Vichinda Dume", "Vichinda Jike"),
+}
+
+
+async def _seed_category_transition_rules(db: AsyncSession) -> int:
+    """Insert the default rules that do not exist yet (never overwrites edited rules). Returns rows added."""
+    cats = {(c.species, c.name_sw): c.id for c in (await db.execute(select(Category))).scalars().all()}
+    added = 0
+    for species, (young_m, young_f) in _TRANSITION_SEED_CHAIN.items():
+        # (from, to_f, to_m, trigger, age_months, event)
+        chain = [
+            (young_m, None, "Achishwa Dume", TransitionTriggerType.AGE, 7, None),
+            (young_f, "Achishwa Jike", None, TransitionTriggerType.AGE, 7, None),
+            ("Achishwa Dume", None, "Dume Wadogo", TransitionTriggerType.AGE, 18, None),
+            ("Achishwa Jike", "Mitamba", None, TransitionTriggerType.AGE, 18, None),
+            ("Mitamba", "Koo", None, TransitionTriggerType.EVENT, None, "first_calving"),
+        ]
+        for from_sw, to_f_sw, to_m_sw, trigger, age, event in chain:
+            ids = [cats.get((species, n)) for n in (from_sw, to_f_sw, to_m_sw) if n]
+            if any(i is None for i in ids):
+                logger.warning("Transition seed skipped for %s %s: category missing", species.value, from_sw)
+                continue
+            from_id = cats[(species, from_sw)]
+            exists = (await db.execute(select(CategoryTransitionRule.id).where(
+                CategoryTransitionRule.species == species,
+                CategoryTransitionRule.from_category_id == from_id,
+                CategoryTransitionRule.trigger_type == trigger,
+            ))).first()
+            if exists:
+                continue
+            db.add(CategoryTransitionRule(
+                species=species, from_category_id=from_id,
+                to_category_id_f=cats.get((species, to_f_sw)) if to_f_sw else None,
+                to_category_id_m=cats.get((species, to_m_sw)) if to_m_sw else None,
+                trigger_type=trigger, trigger_age_months=age, trigger_event=event, is_active=True,
+            ))
+            added += 1
+    await db.commit()
+    return added
+
+
+def _age_in_months(birth_date: date, today: date) -> int:
+    months = (today.year - birth_date.year) * 12 + (today.month - birth_date.month)
+    if today.day < birth_date.day:
+        months -= 1
+    return max(months, 0)
+
+
+def _rule_trigger_label(rule: CategoryTransitionRule) -> str:
+    if rule.trigger_type == TransitionTriggerType.AGE:
+        return f"age_{rule.trigger_age_months}m"
+    return rule.trigger_event or "event"
+
+
+async def _to_transition_responses(db: AsyncSession, rows) -> List[CategoryTransitionResponse]:
+    if not rows:
+        return []
+    cat_ids = {r.from_category_id for r in rows} | {r.to_category_id for r in rows}
+    cat_names = {c.id: c.name_sw for c in (await db.execute(select(Category).where(Category.id.in_(cat_ids)))).scalars()}
+    tags = {a.id: a.tag_number for a in (await db.execute(
+        select(Animal).where(Animal.id.in_({r.animal_id for r in rows})))).scalars()}
+    user_ids = {r.confirmed_by for r in rows if r.confirmed_by}
+    users = {}
+    if user_ids:
+        users = {u.id: u.name for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars()}
+    return [CategoryTransitionResponse(
+        id=r.id, animal_id=r.animal_id, tag_number=tags.get(r.animal_id, ""),
+        from_category=cat_names.get(r.from_category_id, ""), to_category=cat_names.get(r.to_category_id, ""),
+        transition_date=r.transition_date, trigger=r.trigger, notes=r.notes,
+        confirmed_by_name=users.get(r.confirmed_by),
+    ) for r in rows]
+
+
+async def _confirm_category_transition(
+    db: AsyncSession, animal_id: int, to_category_id: int, trigger: str, rule_id: Optional[int],
+    notes: Optional[str], confirmed_by_id: Optional[int],
+) -> CategoryTransitionResponse:
+    """Move one animal to a new category and shift one head of stock, all-or-nothing.
+
+    Everything runs in a SAVEPOINT: any failure leaves animal, stock and audit rows untouched even if the
+    caller swallows the exception. The caller owns the outer transaction and commits.
+    Stock uses stock_levels.current_count (written directly; apply/reverse_event_stock are not involved).
+    """
+    try:
+        async with db.begin_nested():
+            animal = (await db.execute(
+                select(Animal).where(Animal.id == animal_id).with_for_update()
+            )).scalar_one_or_none()
+            if animal is None:
+                raise HTTPException(status_code=404, detail="Animal not found")
+            if animal.status != AnimalStatus.ACTIVE:
+                raise HTTPException(status_code=400, detail="Only active animals can change category")
+            if animal.category_id == to_category_id:
+                raise HTTPException(status_code=400, detail="Animal is already in that category")
+            to_cat = await db.get(Category, to_category_id)
+            if to_cat is None:
+                raise HTTPException(status_code=404, detail="Target category not found")
+            if to_cat.species != animal.species or not to_cat.is_active:
+                raise HTTPException(status_code=400, detail="Target category must be an active category of the animal's species")
+            from_category_id = animal.category_id
+            now = datetime.now(timezone.utc)
+
+            same_row = and_(StockLevel.location_id == animal.location_id, StockLevel.species == animal.species)
+            dec = await db.execute(
+                update(StockLevel)
+                .where(same_row, StockLevel.category_id == from_category_id, StockLevel.current_count >= 1)
+                .values(current_count=StockLevel.current_count - 1, last_updated=now)
+                .execution_options(synchronize_session=False)
+            )
+            if dec.rowcount != 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Stock for the current category is 0 at this location; correct stock before changing category",
+                )
+            inc_stmt = (
+                update(StockLevel)
+                .where(same_row, StockLevel.category_id == to_category_id)
+                .values(current_count=StockLevel.current_count + 1, last_updated=now)
+                .execution_options(synchronize_session=False)
+            )
+            if (await db.execute(inc_stmt)).rowcount == 0:
+                try:
+                    async with db.begin_nested():
+                        db.add(StockLevel(location_id=animal.location_id, species=animal.species,
+                                          category_id=to_category_id, current_count=1, last_updated=now))
+                        await db.flush()
+                except IntegrityError:  # another request created the row first
+                    if (await db.execute(inc_stmt)).rowcount != 1:
+                        raise HTTPException(status_code=409, detail="Could not update stock for the new category")
+
+            transition = CategoryTransition(
+                animal_id=animal.id, rule_id=rule_id, from_category_id=from_category_id,
+                to_category_id=to_category_id, transition_date=date.today(), trigger=trigger,
+                notes=notes, confirmed_by=confirmed_by_id,
+            )
+            db.add(transition)
+            animal.category_id = to_category_id
+            await db.flush()
+        return (await _to_transition_responses(db, [transition]))[0]
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Category transition failed for animal %s", animal_id)
+        raise HTTPException(status_code=500, detail="Category transition failed; nothing was changed")
+
+
+async def _resolve_transition(db: AsyncSession, animal_id: int, to_category_id: int):
+    """(trigger, rule_id) for a confirm: the matching active rule, else a manual transition."""
+    animal = await db.get(Animal, animal_id)
+    if animal is None:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    rule = (await db.execute(select(CategoryTransitionRule).where(
+        CategoryTransitionRule.species == animal.species,
+        CategoryTransitionRule.from_category_id == animal.category_id,
+        CategoryTransitionRule.is_active.is_(True),
+        or_(CategoryTransitionRule.to_category_id_f == to_category_id,
+            CategoryTransitionRule.to_category_id_m == to_category_id),
+    ).order_by(CategoryTransitionRule.id))).scalars().first()
+    if rule is None:
+        return "manual", None
+    return _rule_trigger_label(rule), rule.id
+
+
+async def _build_transition_queue(db: AsyncSession, species=None, location_id=None) -> TransitionQueueResponse:
+    """Animals past an active AGE rule's threshold. Read-only."""
+    rule_query = select(CategoryTransitionRule).where(
+        CategoryTransitionRule.is_active.is_(True),
+        CategoryTransitionRule.trigger_type == TransitionTriggerType.AGE,
+        CategoryTransitionRule.trigger_age_months.isnot(None),
+    ).order_by(CategoryTransitionRule.id)
+    if species is not None:
+        rule_query = rule_query.where(CategoryTransitionRule.species == species)
+    rules = (await db.execute(rule_query)).scalars().all()
+    if not rules:
+        return TransitionQueueResponse(pending=[], total=0)
+    cat_names = {c.id: c.name_sw for c in (await db.execute(select(Category))).scalars()}
+    today = date.today()
+    recent = {(r.animal_id, r.from_category_id, r.to_category_id) for r in (await db.execute(
+        select(CategoryTransition).where(CategoryTransition.transition_date >= today - timedelta(days=7))
+    )).scalars()}
+    pending = []
+    for rule in rules:
+        query = select(Animal).options(selectinload(Animal.location)).where(
+            Animal.species == rule.species, Animal.category_id == rule.from_category_id,
+            Animal.status == AnimalStatus.ACTIVE, Animal.birth_date.isnot(None),
+        ).order_by(Animal.tag_number)
+        if location_id is not None:
+            query = query.where(Animal.location_id == location_id)
+        for animal in (await db.execute(query)).scalars().all():
+            age = _age_in_months(animal.birth_date, today)
+            if age < rule.trigger_age_months:
+                continue
+            target = rule.to_category_id_f if animal.sex == AnimalSex.FEMALE else rule.to_category_id_m
+            if target is None or (animal.id, rule.from_category_id, target) in recent:
+                continue
+            pending.append(TransitionQueueItem(
+                animal_id=animal.id, tag_number=animal.tag_number, species=animal.species,
+                current_category=cat_names.get(animal.category_id, ""), to_category_id=target,
+                to_category=cat_names.get(target, ""), age_months=age,
+                location_name=animal.location.name if animal.location else None,
+                rule_id=rule.id, trigger=_rule_trigger_label(rule),
+            ))
+    return TransitionQueueResponse(pending=pending, total=len(pending))
+
+
+async def _maybe_first_calving_transition(db: AsyncSession, animal_id: int, user_id: Optional[int]) -> None:
+    """After a CALVING event: move a heifer to the cow category once. Best-effort: never blocks the calving record."""
+    animal = await db.get(Animal, animal_id)
+    if animal is None:
+        return
+    rule = (await db.execute(select(CategoryTransitionRule).where(
+        CategoryTransitionRule.species == animal.species,
+        CategoryTransitionRule.trigger_type == TransitionTriggerType.EVENT,
+        CategoryTransitionRule.trigger_event == "first_calving",
+        CategoryTransitionRule.is_active.is_(True),
+        CategoryTransitionRule.from_category_id == animal.category_id,
+    ))).scalars().first()
+    target = rule.to_category_id_f if rule else None
+    if rule is None or target is None or animal.sex != AnimalSex.FEMALE:
+        return
+    prior = (await db.execute(select(func.count(CategoryTransition.id)).where(
+        CategoryTransition.animal_id == animal_id, CategoryTransition.trigger == "first_calving",
+    ))).scalar_one()
+    if prior:
+        return
+    try:
+        await _confirm_category_transition(db, animal_id, target, "first_calving", rule.id, None, user_id)
+    except Exception as exc:  # the savepoint already rolled back; the calving event still saves
+        logger.warning("First-calving transition skipped for animal %s: %s", animal_id, getattr(exc, "detail", exc))
+
+
+async def _rule_response(db: AsyncSession, rule: CategoryTransitionRule) -> CategoryTransitionRuleResponse:
+    ids = {i for i in (rule.from_category_id, rule.to_category_id_f, rule.to_category_id_m) if i}
+    names = {c.id: c.name_sw for c in (await db.execute(select(Category).where(Category.id.in_(ids)))).scalars()}
+    return CategoryTransitionRuleResponse(
+        id=rule.id, species=rule.species, from_category_id=rule.from_category_id,
+        from_category_name=names.get(rule.from_category_id, ""),
+        to_category_id_f=rule.to_category_id_f, to_category_name_f=names.get(rule.to_category_id_f),
+        to_category_id_m=rule.to_category_id_m, to_category_name_m=names.get(rule.to_category_id_m),
+        trigger_type=rule.trigger_type.value, trigger_age_months=rule.trigger_age_months,
+        trigger_event=rule.trigger_event, is_active=rule.is_active, notes=rule.notes,
+    )
+
+
+@api_router.get("/admin/transition-rules", response_model=List[CategoryTransitionRuleResponse])
+async def list_transition_rules(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)),
+):
+    rules = (await db.execute(select(CategoryTransitionRule).order_by(
+        CategoryTransitionRule.species, CategoryTransitionRule.id))).scalars().all()
+    return [await _rule_response(db, r) for r in rules]
+
+
+@api_router.put("/admin/transition-rules/{rule_id}", response_model=CategoryTransitionRuleResponse)
+async def update_transition_rule(
+    rule_id: int,
+    data: CategoryTransitionRuleUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    rule = await db.get(CategoryTransitionRule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Transition rule not found")
+    changes = data.model_dump(exclude_unset=True)
+    if "trigger_age_months" in changes:
+        if rule.trigger_type != TransitionTriggerType.AGE:
+            raise HTTPException(status_code=400, detail="trigger_age_months only applies to age rules")
+        if changes["trigger_age_months"] is None:
+            raise HTTPException(status_code=400, detail="An age rule needs trigger_age_months")
+    if "is_active" in changes and changes["is_active"] is None:
+        raise HTTPException(status_code=400, detail="is_active cannot be null")
+    for key in ("to_category_id_f", "to_category_id_m"):
+        if changes.get(key) is not None:
+            cat = await db.get(Category, changes[key])
+            if cat is None or cat.species != rule.species or not cat.is_active:
+                raise HTTPException(status_code=400, detail="Target category must be an active category of the rule's species")
+            if cat.id == rule.from_category_id:
+                raise HTTPException(status_code=400, detail="Target category must differ from the source category")
+    for key, value in changes.items():
+        setattr(rule, key, value)
+    await db.commit()
+    return await _rule_response(db, rule)
+
+
+@api_router.get("/animals/transition-queue", response_model=TransitionQueueResponse)
+async def get_transition_queue(
+    species: Optional[SpeciesType] = None,
+    location_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)),
+):
+    return await _build_transition_queue(db, species, location_id)
+
+
+@api_router.post("/admin/tasks/sync-category-transitions", response_model=TransitionQueueResponse)
+async def sync_category_transitions(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    # Finds eligible animals only: staff confirm each transition separately.
+    return await _build_transition_queue(db)
+
+
+@api_router.post("/animals/bulk-confirm-transitions", response_model=BulkConfirmResponse)
+async def bulk_confirm_transitions(
+    data: BulkConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    # Each animal is its own savepoint: one failure does not undo the others. One commit at the end.
+    results = []
+    for item in data.transitions:
+        try:
+            trigger, rule_id = await _resolve_transition(db, item.animal_id, item.to_category_id)
+            transition = await _confirm_category_transition(
+                db, item.animal_id, item.to_category_id, trigger, rule_id, data.notes, current_user.id)
+            results.append(BulkConfirmResult(animal_id=item.animal_id, success=True, transition=transition))
+        except HTTPException as exc:
+            results.append(BulkConfirmResult(animal_id=item.animal_id, success=False, error=str(exc.detail)))
+    await db.commit()
+    ok = sum(1 for r in results if r.success)
+    return BulkConfirmResponse(results=results, succeeded=ok, failed=len(results) - ok)
+
+
+@api_router.post("/animals/{animal_id}/confirm-transition", response_model=CategoryTransitionResponse)
+async def confirm_transition(
+    animal_id: int,
+    data: ConfirmTransitionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY)),
+):
+    trigger, rule_id = await _resolve_transition(db, animal_id, data.to_category_id)
+    try:
+        transition = await _confirm_category_transition(
+            db, animal_id, data.to_category_id, trigger, rule_id, data.notes, current_user.id)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    return transition
+
+
+@api_router.get("/animals/{animal_id}/transition-history", response_model=List[CategoryTransitionResponse])
+async def get_transition_history(
+    animal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)),
+):
+    if await db.get(Animal, animal_id) is None:
+        raise HTTPException(status_code=404, detail="Animal not found")
+    rows = (await db.execute(select(CategoryTransition).where(CategoryTransition.animal_id == animal_id)
+                             .order_by(CategoryTransition.transition_date.desc(), CategoryTransition.id.desc()))).scalars().all()
+    return await _to_transition_responses(db, rows)
 
 
 @api_router.get("/animals/{animal_id}", response_model=AnimalResponse)
@@ -5732,6 +6110,8 @@ async def create_reproductive_event(
     db.add(event)
     await db.flush()
     await _apply_reproductive_status(db, animal_id, event)
+    if event.event_type == ReproductiveEventType.CALVING:
+        await _maybe_first_calving_transition(db, animal_id, current_user.id)
     await db.commit()
     await db.refresh(event)
     return ReproductiveEventResponse.model_validate(event)
@@ -6437,6 +6817,97 @@ async def mortality_report(
         by_cause=[dict(cause_name=name, count=count, pct_of_total=round(count / total * 100, 2) if total else 0)
                   for name, count in sorted(causes.items(), key=lambda pair: (pair[0].lower() == "unknown", -pair[1], pair[0]))],
         by_month=list(months.values()), flagged=[row for row in farms if row["is_alert"]],
+    )
+
+
+# Species-specific estimates for the status board; legacy cycle calculations are unchanged.
+STATUS_BOARD_GESTATION_DAYS = {SpeciesType.CATTLE: 283, SpeciesType.SHEEP: 147, SpeciesType.GOAT: 150}
+
+
+@api_router.get("/reproduction/status-board", response_model=ReproductiveStatusBoardResponse)
+async def reproductive_status_board(
+    farm_id: Optional[int] = None,
+    species: Optional[SpeciesType] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.DATA_ENTRY, UserRole.VIEWER)),
+):
+    """Current active female herd. Buckets deliberately overlap; dates use ranch local time."""
+    today = datetime.now(timezone(timedelta(hours=3))).date()
+    query = select(Animal).options(selectinload(Animal.category), selectinload(Animal.location)).where(
+        Animal.sex == AnimalSex.FEMALE, Animal.status == AnimalStatus.ACTIVE)
+    if farm_id is not None:
+        query = query.where(Animal.location_id == farm_id)
+    if species is not None:
+        query = query.where(Animal.species == species)
+    animals = (await db.execute(query.order_by(Animal.tag_number, Animal.id))).scalars().all()
+    # Join the same filtered herd rather than making one query per animal or a large IN clause.
+    events_query = select(ReproductiveEvent).join(Animal, Animal.id == ReproductiveEvent.animal_id).where(
+        Animal.sex == AnimalSex.FEMALE, Animal.status == AnimalStatus.ACTIVE,
+        ReproductiveEvent.event_date <= today)
+    if farm_id is not None:
+        events_query = events_query.where(Animal.location_id == farm_id)
+    if species is not None:
+        events_query = events_query.where(Animal.species == species)
+    latest = {}
+    aborted = set()
+    for event in (await db.execute(events_query.order_by(
+            ReproductiveEvent.event_date.desc(), ReproductiveEvent.id.desc()))).scalars():
+        latest.setdefault(event.animal_id, event)
+        if event.event_type == ReproductiveEventType.ABORTION and event.event_date >= today - timedelta(days=30):
+            aborted.add(event.animal_id)
+    labels = {
+        "open": "Open", "pregnant": "Pregnant", "close_to_calving": "Close to calving",
+        "due_this_month": "Due this month", "recently_calved": "Recently calved",
+        "recently_aborted": "Recently aborted", "repeat_breeders": "Repeat breeders",
+        "unknown_status": "Unknown status", "needs_attention": "Needs attention",
+    }
+    buckets = {key: {"label": label, "count": 0, "animals": []} for key, label in labels.items()}
+    breeding_total = known_total = 0
+    for animal in animals:
+        born = animal.birth_date
+        age = ((today.year - born.year) * 12 + today.month - born.month - (today.day < born.day)) if born else None
+        species_key = "goats" if animal.species == SpeciesType.GOAT else animal.species.value
+        breeding_age = age is not None and age >= BREEDING_AGE_MONTHS[species_key]
+        reproductive_status = animal.reproductive_status or "unknown"
+        pregnant = reproductive_status == "pregnant"
+        known = reproductive_status in ("open", "pregnant")
+        breeding_total += int(breeding_age)
+        known_total += int(breeding_age and known)
+        expected = None
+        if pregnant and animal.last_pd_date is not None and animal.months_pregnant is not None:
+            expected = animal.last_pd_date + timedelta(
+                days=STATUS_BOARD_GESTATION_DAYS[animal.species] - animal.months_pregnant * 30)
+        due = expected is not None and today <= expected <= today + timedelta(days=30)
+        services = animal.services_without_conception or 0
+        recent = latest.get(animal.id)
+        row = dict(
+            id=animal.id, tag_number=animal.tag_number, species=animal.species,
+            category=animal.category.name_sw if animal.category else "Unknown",
+            farm=animal.location.name if animal.location else "Unknown", age_months=age,
+            reproductive_status=reproductive_status, last_event_date=recent.event_date if recent else None,
+            last_event_type=recent.event_type if recent else None, last_pd_date=animal.last_pd_date,
+            last_calving_date=animal.last_calving_date, months_pregnant=animal.months_pregnant,
+            services_without_conception=services, expected_calving_date=expected,
+        )
+        membership = {
+            "open": reproductive_status == "open", "pregnant": pregnant,
+            "close_to_calving": due, "due_this_month": due,
+            "recently_calved": animal.last_calving_date is not None and today - timedelta(days=30) <= animal.last_calving_date <= today,
+            "recently_aborted": animal.id in aborted,
+            "repeat_breeders": services >= REPEAT_BREEDER_THRESHOLD,
+            "unknown_status": reproductive_status == "unknown" and not breeding_age,
+            "needs_attention": (reproductive_status == "unknown" and breeding_age) or (
+                pregnant and animal.last_pd_date is not None and animal.last_pd_date < today - timedelta(days=180)
+            ) or services >= REPEAT_BREEDER_THRESHOLD,
+        }
+        for key, include in membership.items():
+            if include:
+                buckets[key]["animals"].append(row)
+                buckets[key]["count"] += 1
+    return ReproductiveStatusBoardResponse(
+        summary=dict(total_breeding_females=breeding_total,
+                     status_known_pct=round(known_total / breeding_total * 100, 1) if breeding_total else 0),
+        **buckets,
     )
 
 

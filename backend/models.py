@@ -613,3 +613,42 @@ class MortalityThreshold(Base):
     threshold = Column(Numeric(5, 2), nullable=False)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------- Category transitions (aging into the next category) ----------
+class TransitionTriggerType(str, enum.Enum):
+    AGE = "age"      # trigger when the animal reaches trigger_age_months
+    EVENT = "event"  # trigger on a named event (e.g. first_calving)
+
+
+class CategoryTransitionRule(Base):
+    __tablename__ = "category_transition_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    species = Column(SQLEnum(SpeciesType), nullable=False)
+    from_category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    to_category_id_f = Column(Integer, ForeignKey("categories.id"), nullable=True)  # target for females
+    to_category_id_m = Column(Integer, ForeignKey("categories.id"), nullable=True)  # target for males
+    trigger_type = Column(SQLEnum(TransitionTriggerType), nullable=False)
+    trigger_age_months = Column(Integer, nullable=True)
+    trigger_event = Column(String(50), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (UniqueConstraint('species', 'from_category_id', 'trigger_type', name='uq_transition_rule'),)
+
+
+class CategoryTransition(Base):
+    """Audit log: one row per confirmed category change of an animal."""
+    __tablename__ = "category_transitions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False, index=True)
+    rule_id = Column(Integer, ForeignKey("category_transition_rules.id"), nullable=True)
+    from_category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    to_category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    transition_date = Column(Date, nullable=False)
+    trigger = Column(String(50), nullable=True)  # "age_7m", "first_calving", "manual"
+    notes = Column(Text, nullable=True)
+    confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
