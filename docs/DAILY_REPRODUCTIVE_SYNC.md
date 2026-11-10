@@ -60,5 +60,6 @@ modules (`test_csv_import`, `test_dashboard_analytics`, `test_disease_events`)
 were excluded as requested; no server was started. All 26 frontend tests passed.
 The production build completed with existing hook/Browserslist warnings.
 Stock helpers were checked unchanged and the API client change is append-only.
-The SQL migration and backfill have not been run against production PostgreSQL;
-this feature has not been deployed.
+Release `9e88f27` deployed to production on 2026-11-10. Both SQL migrations
+succeeded and all 29 model tables were verified; historical-link backfill was
+not run. See DEPLOYMENT.md for execution and build IDs.

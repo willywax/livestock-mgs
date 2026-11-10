@@ -1,6 +1,6 @@
 # ShambaManager — Project Context (handoff file)
 
-> 2026-11-10 update: daily-log reproductive synchronization and the Daily Log Timeline are implemented locally. See [current behavior, migration and validation](DAILY_REPRODUCTIVE_SYNC.md). The older repository snapshot below is historical.
+> 2026-11-10 update: daily-log reproductive synchronization and the Daily Log Timeline are deployed to GCP as `9e88f27`, with production SQL migrations applied. See [current behavior, migration and validation](DAILY_REPRODUCTIVE_SYNC.md). The older repository snapshot below is historical.
 
 Refreshed 2026-11-10 from the repo (`main` at `b999dc8` plus an uncommitted working tree). Sections 2, 4-6, 8-11 and 14 were rewritten; the rest was re-checked.
 

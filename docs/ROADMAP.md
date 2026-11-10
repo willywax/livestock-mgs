@@ -32,5 +32,5 @@ Done: opt-in pagination on `GET /api/animals` and `GET /api/daily-logs` (bare li
 PD/service entry, mother reproductive updates and first-calving hooks, durable
 animal links, replay on edit/delete, and a lazy paginated Daily Log Timeline.
 SQLite backend suite: 228 passed; frontend: 26 passed. Production build passes.
-SQL migration and optional historical-link backfill supplied; production
-migration/deployment not performed for this feature. See DAILY_REPRODUCTIVE_SYNC.md.
+Production SQL migrations and GCP deployment completed for `9e88f27`; optional
+historical-link backfill remains available. See DAILY_REPRODUCTIVE_SYNC.md.

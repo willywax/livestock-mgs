@@ -1,4 +1,12 @@
 # Deployment
+## Verified release: 2026-11-10 — daily-log reproduction
+- Application commit `9e88f27` deployed from a clean Git archive to `elitagroup`, `us-central1`.
+- Backend `shamba-backend-9e88f27` and frontend `srcstock-9e88f27` are Ready and serve 100% of traffic. Existing runtime settings and identities retained.
+- Cloud Builds succeeded: backend `7f68fde9-45ce-44e5-a501-e7b963408b30`, frontend `917f5391-0669-4fda-a69f-ec225dbbd31e`.
+- Migration execution `shamba-migrate-9e88f27-qhscg` succeeded before deployment: `add_daily_reproductive_sync.sql` and `add_perf_indexes.sql` applied, all 29 ORM tables readable, no invalid indexes. No historical-link backfill was run.
+- Verification: Cloud Run revision health and traffic state confirmed. Local validation: 228 backend tests, 26 frontend tests, production build passed. No live-HTTP test suite or authenticated browser workflow was run.
+- Rollback caveat: previous revisions are `shamba-backend-4506bf7` and `srcstock-4506bf7`, but the previous backend cannot decode newly recorded PD_TEST/SERVICE rows. After those types are used, a backend rollback must retain their enum support. Leave additive schema/journal rows intact; traffic rollback does not undo reproductive or category changes.
+
 ## Verified release: 2026-11-10
 - Application commit `4506bf7` deployed from a clean Git archive to `elitagroup`, `us-central1`: reproductive status board, grouped sidebar, category transitions, and animal/form improvements.
 - Backend `shamba-backend-4506bf7` and frontend `srcstock-4506bf7` each serve 100% of traffic. Existing runtime environment and identity retained. Images use tag `4506bf7`.
