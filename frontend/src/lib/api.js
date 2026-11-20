@@ -253,3 +253,9 @@ export const getAnimalTransitionHistory = (animalId) => api.get(`/animals/${anim
 
 // Paginated daily-log timeline; the original activity timeline helper is unchanged.
 export const getAnimalDailyLogTimeline = (animalId, params) => api.get(`/animals/${animalId}/daily-log-timeline`, { params });
+
+// Report tabs: ledger sales (existing endpoint) and reproduction reports.
+export const getSalesReport = (params) => api.get('/reports/sales', { params });
+export const getCalvingReport = (params) => api.get('/reports/calving', { params });
+export const getReproductiveStatusReport = (params) => api.get('/reports/reproductive-status', { params });
+export const getAbortionsReport = (params) => api.get('/reports/abortions', { params });

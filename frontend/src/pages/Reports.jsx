@@ -5,6 +5,9 @@ import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Calendar } from '../components/ui/calendar';
 import DateRangePicker from '../components/DateRangePicker';
+import {
+  SalesReportTab, MortalityReportTab, CalvingReportTab, ReproductiveStatusReportTab, AbortionsReportTab,
+} from '../components/ReportTabs';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
@@ -762,7 +765,18 @@ function Reports() {
           <TabsTrigger value="sales" data-testid="sales-tab">Sales</TabsTrigger>
           <TabsTrigger value="detailed" data-testid="detailed-tab">Detailed Report</TabsTrigger>
           <TabsTrigger value="daily" data-testid="daily-tab">Daily</TabsTrigger>
+          <TabsTrigger value="sales-ledger" data-testid="sales-ledger-tab">Sales Ledger</TabsTrigger>
+          <TabsTrigger value="mortality" data-testid="mortality-tab">Mortality</TabsTrigger>
+          <TabsTrigger value="calving" data-testid="calving-tab">Calving</TabsTrigger>
+          <TabsTrigger value="repro-status" data-testid="repro-status-tab">Reproductive Status</TabsTrigger>
+          <TabsTrigger value="abortion-log" data-testid="abortion-log-tab">Abortion Log</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="sales-ledger" className="mt-6"><SalesReportTab locations={locations} /></TabsContent>
+        <TabsContent value="mortality" className="mt-6"><MortalityReportTab locations={locations} /></TabsContent>
+        <TabsContent value="calving" className="mt-6"><CalvingReportTab locations={locations} /></TabsContent>
+        <TabsContent value="repro-status" className="mt-6"><ReproductiveStatusReportTab locations={locations} /></TabsContent>
+        <TabsContent value="abortion-log" className="mt-6"><AbortionsReportTab locations={locations} /></TabsContent>
 
         <TabsContent value="analytics" className="space-y-6 mt-6">
           <Card className="border-border/60">
