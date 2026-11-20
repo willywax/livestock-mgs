@@ -2,7 +2,7 @@
 
 > 2026-11-10 update: daily-log reproductive synchronization and the Daily Log Timeline are deployed to GCP as `9e88f27`, with production SQL migrations applied. See [current behavior, migration and validation](DAILY_REPRODUCTIVE_SYNC.md). The older repository snapshot below is historical.
 
-> 2026-11-21 release preparation: the changes being merged to `main` add `animals.lifetime_calvings`, a read-only reports router and five Reports-page tabs; see section 10 and decision 0011. Sections not mentioned there were not re-verified in this refresh and may be stale (Unverified).
+> 2026-11-21 release: application commit `8fcc4ca` on `main` adds `animals.lifetime_calvings`, a read-only reports router and five Reports-page tabs; see section 10 and decision 0011. Sections not mentioned there were not re-verified in this refresh and may be stale (Unverified).
 
 Refreshed 2026-11-10 from the repo (`main` at `b999dc8` plus an uncommitted working tree). Sections 2, 4-6, 8-11 and 14 were rewritten; the rest was re-checked.
 
