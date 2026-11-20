@@ -80,6 +80,7 @@ from auth import (
     verify_password, get_password_hash, create_access_token,
     get_current_user, require_roles
 )
+from reports_router import reports_router
 from seed_data import get_seed_categories, get_default_admin, get_sample_locations
 
 ROOT_DIR = Path(__file__).parent
@@ -7356,6 +7357,9 @@ async def reproductive_status_board(
 
 # Include router after all route declarations.
 app.include_router(api_router)
+# New read-only reproduction reports (calving, reproductive-status, abortions); paths do not
+# overlap any api_router /reports/* route.
+app.include_router(reports_router)
 
 @app.on_event("shutdown")
 async def shutdown():
