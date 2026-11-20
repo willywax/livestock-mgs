@@ -1,4 +1,14 @@
 # Deployment
+## Verified release: 2026-11-21 - reports, reproduction KPIs and lifetime calvings
+- Application commit `8fcc4ca` pushed to `main` and deployed from a clean Git archive to `elitagroup`, `us-central1`.
+- Backend `shamba-backend-8fcc4ca` and frontend `srcstock-8fcc4ca` are Ready and serve 100% of traffic. Existing runtime configuration and identities retained.
+- Cloud Builds succeeded: backend `10d0c208-a0f1-42f8-aa52-e789c4483cd4`, frontend `7e8c87b2-81f5-4a2e-bd9f-ac7e2ba1d23c`. Images use tag `8fcc4ca`.
+- Applied `backend/migrations/add_lifetime_calvings.sql` before deployment: nullable INTEGER column and NULL-only counter initialization committed successfully. All 1,603 animals initialized; zero counter mismatches and zero invalid indexes. Animal and cycle row counts remained 1,603 and 2. Total cycle-based calvings is zero (existing cycles are SERVED and ABORTED). Daily-log-only calving history is not backfilled into cycles.
+- Validation: 246 self-contained backend tests, 35 frontend tests, import smoke check, syntax lint and production build passed. Existing hook/deprecation warnings remain. PostgreSQL 16 migration and repeat execution passed; repeated application startup and all 29 ORM table reads passed on a disposable database (stopped afterward).
+- Production read-only validation passed for all 29 ORM tables, all three new report queries and reproduction KPI queries. Live OpenAPI exposes the new report routes, species filter and search_tags; unauthenticated report access returns HTTP 403.
+- Frontend reports page and JavaScript returned HTTP 200. Published bundle `main.ed5af445.js` contains the report tabs, calving endpoint and all-tag search. Interactive login and authenticated browser workflows were not exercised.
+- Rollback traffic targets: `shamba-backend-tags-20261116` and `srcstock-tags-20261116`. Leave the additive column and backfilled counters in place.
+
 ## Verified release: 2026-11-16 — all animal tag types
 - Deployed the working tree based on `59a4009`, including the animal search changes, to `elitagroup`, `us-central1`.
 - Backend `shamba-backend-tags-20261116` and frontend `srcstock-tags-20261116` are Ready and serve 100% of traffic. Existing runtime configuration retained.
