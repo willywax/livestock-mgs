@@ -166,6 +166,7 @@ async def startup():
             "last_pd_date DATE",
             "months_pregnant INTEGER",
             "services_without_conception INTEGER DEFAULT 0",
+            "lifetime_calvings INTEGER",
         ):
             await conn.execute(text(f"ALTER TABLE animals ADD COLUMN IF NOT EXISTS {definition}"))
         # create_all() does not add indexes to existing tables.
@@ -5530,6 +5531,29 @@ async def _refresh_following_cycles(db: AsyncSession, animal_id: int, after_numb
         await _recompute_cycle_fields(db, later)
 
 
+async def _sync_lifetime_calvings(animal_id: int, db: AsyncSession) -> None:
+    """Recount animals.lifetime_calvings from reproductive_cycles (abortions excluded).
+
+    Best-effort: never raises; failures are logged as warnings. The UPDATE runs in a
+    savepoint so a failure cannot poison the caller's transaction.
+    """
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    "UPDATE animals SET lifetime_calvings = ("
+                    "SELECT COUNT(*) FROM reproductive_cycles "
+                    "WHERE animal_id = :animal_id "
+                    "AND calving_outcome IN ('LIVE_CALF','STILLBIRTH','ASSISTED_LIVE','ASSISTED_DEAD')"
+                    "), updated_at = CURRENT_TIMESTAMP WHERE id = :animal_id"
+                ),
+                {"animal_id": animal_id},
+            )
+        await db.commit()
+    except Exception as exc:
+        logger.warning("lifetime_calvings sync failed for animal %s: %s", animal_id, exc)
+
+
 @api_router.get("/reproductive-cycles", response_model=List[ReproductiveCycleResponse])
 async def list_reproductive_cycles(
     animal_id: Optional[int] = None,
@@ -5591,6 +5615,8 @@ async def create_reproductive_cycle(
     if cycle.actual_calving_date:
         await _sync_cycle_calving_status(db, cycle)
         await db.commit()
+    if cycle.calving_outcome is not None:
+        await _sync_lifetime_calvings(cycle.animal_id, db)
     return _cycle_response(await _load_cycle(db, cycle.id))
 
 
@@ -5630,6 +5656,8 @@ async def update_reproductive_cycle(
     if changes.get("actual_calving_date"):
         await _sync_cycle_calving_status(db, cycle)
         await db.commit()
+    if "calving_outcome" in changes:
+        await _sync_lifetime_calvings(cycle.animal_id, db)
     return _cycle_response(await _load_cycle(db, cycle_id))
 
 
@@ -5645,6 +5673,7 @@ async def delete_reproductive_cycle(
     await db.flush()
     await _refresh_following_cycles(db, animal_id, number)
     await db.commit()
+    await _sync_lifetime_calvings(animal_id, db)
     return {"message": "Reproductive cycle deleted"}
 
 

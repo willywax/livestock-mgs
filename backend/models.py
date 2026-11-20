@@ -266,6 +266,7 @@ class Animal(Base):
     last_pd_date = Column(Date, nullable=True)
     months_pregnant = Column(Integer, nullable=True)
     services_without_conception = Column(Integer, default=0, server_default="0", nullable=True)
+    lifetime_calvings = Column(Integer, nullable=True)  # derived count; backfilled from reproductive_cycles
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

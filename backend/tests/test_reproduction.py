@@ -145,6 +145,32 @@ async def test_cycle_intervals_recompute_on_edit_and_delete(client, db_session):
     assert got["calving_interval_days"] is None and got["cycle_number"] == 2
 
 
+async def test_lifetime_calvings_tracks_cycle_saves(client, db_session):
+    cow = await make_animal(db_session, "LC1")
+    count = lambda: db_session.scalar(select(Animal.lifetime_calvings).where(Animal.id == cow))  # noqa: E731
+    c1 = await cycle(client, cow, service_date="2023-01-01", actual_calving_date="2023-10-01", calving_outcome="live_calf")
+    await db_session.commit()  # end the read snapshot so the next read sees the route's write
+    assert await count() == 1
+    ab = await cycle(client, cow, service_date="2024-01-01", actual_calving_date="2024-10-01", calving_outcome="abortion")
+    await db_session.commit()
+    assert await count() == 1  # abortions are not calvings
+    await put(client, f"/api/reproductive-cycles/{ab['id']}", calving_outcome="stillbirth")
+    await db_session.commit()
+    assert await count() == 2
+    await client.delete(f"/api/reproductive-cycles/{c1['id']}", headers=auth("admin"))
+    await db_session.commit()
+    assert await count() == 1
+
+
+async def test_lifetime_calvings_failure_never_raises(client, db_session, monkeypatch):
+    cow = await make_animal(db_session, "LC2")
+
+    async def boom(*a, **k):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(db_session, "execute", boom, raising=False)
+    await server._sync_lifetime_calvings(cow, db_session)  # must swallow and log
+
+
 async def test_cycle_update_recomputes_expected_date(client, db_session):
     cow = await make_animal(db_session, "C1")
     c = await cycle(client, cow, service_date="2024-01-10")
