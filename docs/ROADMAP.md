@@ -9,7 +9,7 @@ Sizes: S = under a day, M = a few days, L = a week or more (estimates, Unverifie
 | R8 | Align deployment: target region, secret bindings, correct README; owner removes obsolete REGISTRY_*/INTERNAL_SYNC_* env vars and any drain scheduler job | S | K11, K20 | Owner decides region |
 | R10 | Frontend tests and CI workflow (needs approval) | M | K15 | |
 | R12 | (done 2026-11-08, branch `ft/animal-detail`) Animal detail page for reproduction/profile; remaining: browser verification with real data and a GCS bucket | S | K22, K25 | Needs `GCS_BUCKET_NAME` configured for photos |
-| R13 | Backend: `species` filter on `/analytics/reproduction` and species-aware gestation default (sheep 147, goat 150) instead of the 283-day constant; then drop the browser-side species KPI maths | S | K23, K24 | Additive backend change |
+| R13 | Backend: species-aware gestation default (sheep 147, goat 150) instead of the 283-day constant. The `species` filter on `/analytics/reproduction` and removal of the browser-side KPI maths were done 2026-11-20 (uncommitted at the time) | S | K23, K24 | Additive backend change |
 | R11 | Chemical rotation policy/inventory and notifications | L | PRD backlog | |
 
 Done 2026-11-08: R1 (close unauthenticated reads) on `ft/r1-auth-hardening`; follow-up K21 needs a frontend change.
@@ -24,6 +24,9 @@ Done 2026-11-08: Animal detail page `/animals/:id` (branch `ft/animal-detail`).
 
 ## Status board delivery (2026-11-10)
 Implemented the nine-bucket reproductive status board and collapsible sidebar groups. Remaining navigation work: implement Transition Queue, Stock Overview, Sales Report and Customers frontend pages at their requested routes. Existing links and role restrictions are retained. No deployment is included in this change.
+
+## Reports tabs follow-ups (2026-11-20)
+Decide whether the new Sales Ledger and Abortion Log tabs replace the analytics-based Sales and Abortions tabs, add a `/reports/sales` frontend route (or repoint the sidebar link), and consider an abortion-date filter that is not `created_at`. Nothing here is deployed.
 
 ## List performance (2026-11-10)
 Done: opt-in pagination on `GET /api/animals` and `GET /api/daily-logs` (bare list stays the default so existing consumers keep working), `event_count` on daily-log rows, column pruning on embedded events and related rows, and a single-query transition queue (SQL birth-date cutoff). Remaining: move Animals.jsx / DailyLogs.jsx to paged requests (then the default can change), and an optional SQL rewrite of the status board (left as is: two queries, overlapping Python-side buckets).

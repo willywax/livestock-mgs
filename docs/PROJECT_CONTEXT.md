@@ -2,6 +2,8 @@
 
 > 2026-11-10 update: daily-log reproductive synchronization and the Daily Log Timeline are deployed to GCP as `9e88f27`, with production SQL migrations applied. See [current behavior, migration and validation](DAILY_REPRODUCTIVE_SYNC.md). The older repository snapshot below is historical.
 
+> 2026-11-20 update: branch `feat/lifetime-calvings` (3 local commits on top of `59a4009`, not pushed or deployed) adds `animals.lifetime_calvings`, a read-only reports router and five Reports-page tabs; see section 10 and decision 0011. Sections not mentioned there were not re-verified in this refresh and may be stale (Unverified).
+
 Refreshed 2026-11-10 from the repo (`main` at `b999dc8` plus an uncommitted working tree). Sections 2, 4-6, 8-11 and 14 were rewritten; the rest was re-checked.
 
 ## 1. How to use this file
@@ -14,8 +16,8 @@ Line numbers quoted from the repo analysis drift quickly; treat them as hints an
 - Purpose: multi-location livestock stock and farm-operations app for a ranching business in Tanzania. Livestock are tracked mainly as COUNTS per location + species + category, driven by daily-log events; an individual-animal register, reproduction tracking, farm-health scheduling and reporting sit alongside.
 - Users (roles): `admin`, `data_entry` (office staff entering logs), `viewer` (read-only). Login is by phone number + password (JWT).
 - Status: actively developed and in use. `docs/KNOWN_ISSUES.md` (K22) records a production check on 2026-11-08 and `git log` records a GCP release of `816dac4` on 2026-11-09; current live state is Unverified.
-- Last updated: 2026-11-10.
-- Branch/commit: `main` at `b999dc8` ("docs: record GCP release of 816dac4"), 3 commits ahead of `origin/main` per `git rev-list` (push state beyond that is Unverified). The working tree is NOT clean: 23 modified and 11 untracked paths (listed in section 10), nothing of it committed. Older local branches (`ft/*`, `chore/*`, `ft-edit-event`, `ft-schedule`, `new-ft`) were not re-inspected (Unverified).
+- Last updated: 2026-11-20 (targeted refresh; the 2026-11-10 body is otherwise unchanged).
+- Branch/commit (2026-11-20): working branch `feat/lifetime-calvings` at `142d9bf`, 3 commits ahead of `main` (`59a4009`); the working tree still holds other uncommitted work (animal-search frontend, `schemas.py`, `test_identifiers.py`, `DEPLOYMENT.md`). Earlier snapshot (2026-11-10): `main` at `b999dc8` ("docs: record GCP release of 816dac4"), 3 commits ahead of `origin/main` per `git rev-list` (push state beyond that is Unverified). The working tree is NOT clean: 23 modified and 11 untracked paths (listed in section 10), nothing of it committed. Older local branches (`ft/*`, `chore/*`, `ft-edit-event`, `ft-schedule`, `new-ft`) were not re-inspected (Unverified).
 - Recent feature history (newest first, from `git log` and the working tree): category transitions (rules, queue, confirm, audit; decision 0010, uncommitted); register CSV export, sex filter, event-form category auto-fill (uncommitted); reproductive status board `/reproduction/status` and sidebar navigation (uncommitted); unified event forms (`816dac4`); mortality dashboard, tag reconciliation and date-range filters (`5beb38e`); standalone reproductive events with frontend recording (`ff6314c`); animal identifiers; sales/customers; temp tags; event-to-register sync (decision 0009); animal profile page; reproduction/photos backend (decision 0008); Registry removal (decision 0007); auth hardening of 13 GET routes.
 - Event-to-register sync (decision 0009): daily-log events update matching `animals` rows (status, location, category, auto-created animals) and write `animal_location_history`, best-effort after the stock commit; `EventResponse.sync_warnings` reports skipped tags. Birth events with blank/`NEW`/`TEMP` offspring tags auto-create `TEMP-<LOC>-<YYYYMMDD>-NNN` animals; `POST /api/animals/{id}/replace-tag` swaps in the real tag.
 - Category transitions (decision 0010, uncommitted): animals move up a sex-specific chain by age (7 and 18 months by default) or on first calving. Confirming changes `animals.category_id` and moves one head between `stock_levels` rows in one transaction; it writes no daily-log event, so do not also log a `category_change` for the same move.
@@ -45,6 +47,7 @@ livestock-mgs/
   backend/
     server.py               ~6,900 lines (129 route handlers): FastAPI app, ALL routes, startup DDL+seed, stock logic, health logic,
                             reproduction, reconciliation, mortality, sales, category-transition blocks (all above `include_router`)
+    reports_router.py       read-only /api/reports/{calving,reproductive-status,abortions} (decision 0011); included after api_router
     models.py               SQLAlchemy models and enums (26 tables)
     schemas.py              Pydantic request/response models
     database.py             async engine/session, DATABASE_URL normalisation
@@ -188,6 +191,12 @@ Everything below exists in the repo. Slash commands live in `.claude/skills/<nam
 - Not set up: CI, a format-on-edit hook, a migration-protection hook (no migrations exist).
 
 ## 10. Current work
+2026-11-20 branch work (`feat/lifetime-calvings`, committed locally, not pushed or deployed):
+- `dbec6d2`: nullable `animals.lifetime_calvings INTEGER` (startup `ADD COLUMN IF NOT EXISTS`), best-effort `_sync_lifetime_calvings` after cycle create/update/delete. Backfill is a manual UPDATE that has NOT been run on live data; verified on a throwaway Postgres only.
+- `3f6b210`: `backend/reports_router.py` with `GET /api/reports/calving`, `/reproductive-status`, `/abortions` (any active role). `/api/reports/sales` and `/mortality` are unchanged.
+- `142d9bf`: Reports page tabs Sales Ledger, Mortality (existing endpoints) plus Calving, Reproductive Status, Abortion Log (new endpoints) in `ReportTabs.jsx`; `api.js` append-only. Checked by build only, not in a browser.
+- Deploy order if released: backend first (startup DDL), then run the backfill UPDATE, then frontend. Caveats are in `docs/KNOWN_ISSUES.md` ("Reproduction reports and lifetime_calvings").
+
 Recent commits on `main` (newest first): `b999dc8` docs: record GCP release of 816dac4; `816dac4` unify event forms and fix event type updates; `5beb38e` mortality dashboard, tag reconciliation, date-range filters; `ff6314c` standalone reproductive events and frontend recording; `9077b23` checkpoint of the animal identifier work; `57199a2` temp-tag UI; `c08f9db` events wired to the animal register.
 
 Uncommitted working tree (23 modified, 11 untracked as of this refresh; nothing is committed or pushed by Claude):

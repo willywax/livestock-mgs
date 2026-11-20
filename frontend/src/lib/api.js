@@ -259,3 +259,9 @@ export const getSalesReport = (params) => api.get('/reports/sales', { params });
 export const getCalvingReport = (params) => api.get('/reports/calving', { params });
 export const getReproductiveStatusReport = (params) => api.get('/reports/reproductive-status', { params });
 export const getAbortionsReport = (params) => api.get('/reports/abortions', { params });
+
+// Reproduction KPIs for one species (omit species for all). `period` as in getReproductionAnalytics.
+export const getReproductionAnalyticsForSpecies = (locationId, period, species) =>
+  api.get('/analytics/reproduction', {
+    params: { location_id: locationId, species, date_from: period.date_from, date_to: period.date_to },
+  });

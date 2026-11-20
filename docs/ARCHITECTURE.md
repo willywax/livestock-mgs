@@ -3,6 +3,7 @@ Short map. Full detail (inventory, request flow, UI routes, risks): [context/arc
 
 ## Modules
 - `backend/server.py` entry point (`app`), all `/api` routes, startup DDL/seed, stock apply/reverse/recompute, farm-health due-date logic.
+- `backend/reports_router.py`: `reports_router` (prefix `/api/reports`), included in `server.py` after `api_router`. Read-only reproduction reports `/calving`, `/reproductive-status`, `/abortions` (SQLAlchemy Core, portable to SQLite). It must never reuse a path already in `api_router` (`/reports/daily|range|analytics|detailed|sales|mortality`). Pydantic response models live in that file, not `schemas.py`.
 - `backend/models.py`, `schemas.py`, `database.py`, `auth.py`: ORM + enums, Pydantic contracts, async engine/session, JWT + `require_roles`.
 - `frontend/src/App.js` (routes), `pages/`, `components/`, `context/AuthContext.js`, `lib/api.js`.
 

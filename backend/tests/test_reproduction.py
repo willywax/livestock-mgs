@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 import server
-from conftest import FARM_ID, auth, category_id, make_location, make_stock
+from conftest import FARM_ID, auth, category_id, make_daily_log, make_location, make_stock, post_event
 from models import (
     Animal, AnimalAcquisitionType, AnimalPhoto, AnimalSex, AnimalStatus, CategoryScope,
     FarmHealthEvent, HealthEventType, SpeciesType,
@@ -364,6 +364,51 @@ async def test_reproduction_analytics_metrics(client, db_session):
     assert m["bcs_distribution"] == {"1.0-1.5": 1, "2.0-2.5": 1, "3.0-3.5": 1, "4.0+": 1}
     assert [loc["location_name"] for loc in m["by_location"]] == ["Test Farm"]
     assert m["by_location"][0]["live_calvings"] == 1
+
+
+async def test_reproduction_analytics_uses_daily_log_births_and_animal_status(client, db_session):
+    """Ranch data lives in daily-log events and animal fields, not reproductive_cycles."""
+    koo = await category_id(db_session, CATTLE)
+    a, b, c = [await make_animal(db_session, tag, cat=koo) for tag in ("PA", "OB", "OC")]
+    (await db_session.get(Animal, a)).reproductive_status = "pregnant"
+    (await db_session.get(Animal, b)).reproductive_status = "open"
+    await db_session.commit()
+    log = await make_daily_log(db_session, FARM_ID, date(2025, 3, 10))
+    out_of_range = await make_daily_log(db_session, FARM_ID, date(2024, 12, 31))
+    calf = await category_id(db_session, CATTLE, "Ndama Jike")  # births add calves, not Koo
+    for log_id, count in ((log, 2), (out_of_range, 5)):
+        r = await post_event(client, log_id, event_type="birth", species="cattle", category_id=calf, count=count)
+        assert r.status_code == 200, r.text
+    r = await post_event(client, log, event_type="pd_test", species="cattle", category_id=koo, count=3, pd_result="pregnant")
+    assert r.status_code == 200, r.text
+    r = await post_event(client, log, event_type="pd_test", species="cattle", category_id=koo, count=1, pd_result="open")
+    assert r.status_code == 200, r.text
+
+    m = (await client.get("/api/analytics/reproduction?year=2025", headers=auth("viewer"))).json()
+    assert m["live_calvings"] == 2 and m["calving_rate"] == 0.04     # 2 births / 50 Koo; 2024 birth excluded
+    assert m["conception_rate"] == 0.75                              # 3 pregnant of 4 PD results
+    assert (m["pregnant_cows"], m["open_cows"]) == (1, 2)            # from animals.reproductive_status
+    assert m["by_location"][0]["live_calvings"] == 2
+    sheep = (await client.get("/api/analytics/reproduction?year=2025&species=sheep", headers=auth("viewer"))).json()
+    assert (sheep["live_calvings"], sheep["open_cows"], sheep["pregnant_cows"]) == (0, 0, 0)
+    cattle = (await client.get("/api/analytics/reproduction?year=2025&species=cattle", headers=auth("viewer"))).json()
+    assert cattle["live_calvings"] == 2 and cattle["open_cows"] == 2
+    assert (await client.get("/api/analytics/reproduction?species=dragon", headers=auth("viewer"))).status_code == 422
+
+
+async def test_reproduction_analytics_does_not_double_count_cycle_and_log_calving(client, db_session):
+    koo = await category_id(db_session, CATTLE)
+    cow = await make_animal(db_session, "DUP", cat=koo)
+    log = await make_daily_log(db_session, FARM_ID, date(2025, 3, 10))
+    calf = await category_id(db_session, CATTLE, "Ndama Jike")
+    r = await post_event(client, log, event_type="birth", species="cattle", category_id=calf, count=1, mother_tag="DUP")
+    assert r.status_code == 200, r.text
+    await cycle(client, cow, actual_calving_date="2025-03-10", calving_outcome="live_calf", status="calved")
+    m = (await client.get("/api/analytics/reproduction?year=2025", headers=auth("viewer"))).json()
+    assert m["live_calvings"] == 1                                   # same calving recorded twice
+    await cycle(client, cow, actual_calving_date="2025-09-01", calving_outcome="live_calf", status="calved")
+    m = (await client.get("/api/analytics/reproduction?year=2025", headers=auth("viewer"))).json()
+    assert m["live_calvings"] == 2                                   # a different, cycle-only calving still counts
 
 
 async def test_reproduction_analytics_scoping_and_fallback(client, db_session):

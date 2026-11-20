@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { CaretDown, CaretRight, Pencil, Plus } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import {
-  getLocations, getAnimals, getOpeningBalances, getStockLevels, getReproductionAnalytics,
+  getLocations, getAnimals, getReproductionAnalyticsForSpecies,
   getReproductiveCycles, getBullAssignments, createBullAssignment, updateBullAssignment,
 } from '../lib/api';
 import { Card, CardContent } from '../components/ui/card';
@@ -53,60 +53,6 @@ function Pill({ tone, title, children }) {
       {children}
     </span>
   );
-}
-
-// ---------------------------------------------------------------------------
-// KPI maths. For "All species" the numbers come from /analytics/reproduction.
-// For a single species the same definitions are computed here (the endpoint has
-// no species filter), see docs/decisions/0008 and ROADMAP.
-// ---------------------------------------------------------------------------
-function kooCountFrom(kooData, start) {
-  if (!kooData) return 0;
-  const latest = new Map();
-  kooData.balances
-    .filter((b) => b.category_name_sw === 'Koo' && parseDate(b.period_start) <= start)
-    .forEach((b) => {
-      const key = `${b.location_id}|${b.species}|${b.category_id}`;
-      const prev = latest.get(key);
-      if (!prev || b.period_start > prev.period_start) latest.set(key, b);
-    });
-  if (latest.size) return [...latest.values()].reduce((sum, b) => sum + b.count, 0);
-  return kooData.stock
-    .filter((s) => s.category_name_sw === 'Koo')
-    .reduce((sum, s) => sum + s.current_count, 0);
-}
-
-function computeMetrics({ cycles, animals, start, end, kooCount }) {
-  const inYear = (s) => {
-    if (!s) return false;
-    const d = parseDate(s);
-    return d >= start && d <= end;
-  };
-  const calved = cycles.filter((c) => inYear(c.actual_calving_date));
-  const live = calved.filter((c) => ['live_calf', 'assisted_live'].includes(c.calving_outcome)).length;
-  const pdDone = cycles.filter((c) => c.pd_result && inYear(c.pd_check_date));
-  const pdPregnant = pdDone.filter((c) => c.pd_result === 'pregnant').length;
-  const confirmed = cycles.filter(
-    (c) => c.pd_result === 'pregnant' && inYear(c.actual_calving_date || c.pd_check_date || c.service_date)
-  );
-  const aborted = confirmed.filter((c) => c.status === 'aborted' || c.calving_outcome === 'abortion').length;
-  const females = animals.filter((a) => a.status === 'active' && a.sex === 'female');
-  const activeIds = new Set(females.map((a) => a.id));
-  const pregnantIds = new Set(
-    cycles
-      .filter((c) => c.pd_result === 'pregnant' && !c.actual_calving_date && c.status !== 'aborted'
-        && c.calving_outcome !== 'abortion' && activeIds.has(c.animal_id))
-      .map((c) => c.animal_id)
-  );
-  return {
-    koo_count: kooCount,
-    live_calvings: live,
-    calving_rate: kooCount ? live / kooCount : null,
-    conception_rate: pdDone.length ? pdPregnant / pdDone.length : null,
-    abortion_rate: confirmed.length ? aborted / confirmed.length : null,
-    open_cows: females.filter((a) => a.category_name_sw === 'Koo' && !pregnantIds.has(a.id)).length,
-    pregnant_cows: pregnantIds.size,
-  };
 }
 
 const toneByThreshold = (pct, redBelow, amberBelow) => {
@@ -257,7 +203,6 @@ function Reproduction() {
   const [cycles, setCycles] = useState([]);
   const [bulls, setBulls] = useState([]);
   const [analytics, setAnalytics] = useState(null);
-  const [kooData, setKooData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const [locationId, setLocationId] = useState('all');
@@ -291,7 +236,9 @@ function Reproduction() {
       const [cycleRes, bullRes, analyticsRes] = await Promise.all([
         getReproductiveCycles({ location_id: locationParam }),
         getBullAssignments({ active_only: true, location_id: locationParam }),
-        getReproductionAnalytics(locationParam, { date_from: dateFrom, date_to: dateTo }),
+        getReproductionAnalyticsForSpecies(
+          locationParam, { date_from: dateFrom, date_to: dateTo }, species === 'all' ? undefined : species
+        ),
       ]);
       setCycles(cycleRes.data);
       setBulls(bullRes.data);
@@ -301,19 +248,9 @@ function Reproduction() {
     } finally {
       setLoading(false);
     }
-  }, [locationParam, dateFrom, dateTo]);
+  }, [locationParam, dateFrom, dateTo, species]);
 
   useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    if (species === 'all') { setKooData(null); return undefined; }
-    let live = true;
-    const params = { species, location_id: locationParam };
-    Promise.all([getOpeningBalances(params), getStockLevels(params)])
-      .then(([ob, sl]) => { if (live) setKooData({ balances: ob.data, stock: sl.data }); })
-      .catch(() => toast.error('Failed to load Koo counts'));
-    return () => { live = false; };
-  }, [species, locationParam]);
 
   const animalById = useMemo(() => new Map(animals.map((a) => [a.id, a])), [animals]);
   const speciesOf = useCallback((c) => animalById.get(c.animal_id)?.species, [animalById]);
@@ -323,13 +260,8 @@ function Reproduction() {
   );
 
   // ----- KPIs -----
-  const metrics = useMemo(() => {
-    if (species === 'all') return analytics;
-    const pool = animals.filter(
-      (a) => a.species === species && (!locationParam || a.location_id === locationParam)
-    );
-    return computeMetrics({ cycles: scoped, animals: pool, start: startOfDay(range.from), end: startOfDay(range.to), kooCount: kooCountFrom(kooData, startOfDay(range.from)) });
-  }, [species, analytics, animals, scoped, range, kooData, locationParam]);
+  // Backend (/analytics/reproduction, optionally per species) is the single source for these KPIs.
+  const metrics = analytics;
 
   const intervalRows = useMemo(() => {
     const from = startOfDay(range.from);

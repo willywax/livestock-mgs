@@ -11,3 +11,6 @@ Consequences / open points:
 - Signed-URL generation on Cloud Run needs a service account allowed to sign (IAM `signBlob`); the code falls back to IAM signing but this is UNVERIFIED until run against a real bucket.
 - Upload accepts jpeg/png/webp up to 10 MB and checks the file signature; no virus scanning or thumbnails.
 - Frontend for all of this is not built yet.
+
+## Update 2026-11-20: KPIs read daily-log events too
+The page showed calving rate 0%, conception 100% and 0 open cows on a ranch that records reproduction in daily logs (production had 2 cycles and 17 animals with a calving date but no cycle). `_repro_metrics` now combines daily-log BIRTH (offspring count) and PD_TEST (count by result) events with cycles, skipping a cycle calving/PD when a linked event already covers the same animal and date; pregnant/open counts come from `animals.reproductive_status`. `/analytics/reproduction` gained an optional `species` filter and the browser-side per-species KPI maths was removed. The Koo denominator rule above is unchanged.
