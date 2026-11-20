@@ -247,3 +247,46 @@ async def test_import_permissions_and_file_validation(client):
         assert (await import_csv(client, content, role=role)).status_code == 403
     assert (await import_csv(client, content, filename="baseline.txt")).status_code == 400
     assert (await import_csv(client, b"wrong,headers\n")).status_code == 400
+
+
+@pytest.mark.parametrize("kind,value", [
+    ("eid", "901020000131504"), ("uhf_tag", "ABCDEF0123456789ABCDEF01"),
+    ("reader_code", "Reader-42"), ("visual_tag", "Visual-42"),
+    ("branding_mark", "Brand-42"), ("other", "Other-42"),
+])
+async def test_list_searches_all_active_tag_types(client, db_session, kind, value):
+    animal_id = await make_animal(db_session)
+    response = await create(client, animal_id, value=value, kind=kind)
+    assert response.status_code == 200, response.text
+    identifier = response.json()
+    for paged in (False, True):
+        params = {"search": f"  {value[2:-2].lower()}  "}
+        if paged:
+            params["page_size"] = 1
+        result = (await client.get("/api/animals", params=params, headers=auth("viewer"))).json()
+        if paged:
+            assert result["total"] == 1
+            result = result["items"]
+        assert [row["id"] for row in result] == [animal_id]
+        assert value.upper() in [tag.upper() for tag in result[0]["search_tags"]]
+    response = await client.put(f"/api/animals/{animal_id}/identifiers/{identifier['id']}",
+                       json={"is_active": False}, headers=auth("admin"))
+    assert response.status_code == 200, response.text
+    result = await client.get("/api/animals", params={"search": value}, headers=auth("viewer"))
+    assert result.json() == []
+
+
+async def test_list_search_legacy_tags_and_duplicate_matches(client, db_session):
+    animal_id = await make_animal(db_session)
+    animal = await db_session.get(Animal, animal_id)
+    animal.registry_tag_id = "LEGACY-42"
+    await db_session.commit()
+    await create(client, animal_id, value="LEGACY-42", kind="visual_tag")
+    await create(client, animal_id, value="LEGACY-42", kind="other")
+    result = (await client.get("/api/animals", params={"search": "legacy-42", "page_size": 10},
+                               headers=auth("viewer"))).json()
+    assert result["total"] == 1
+    assert result["items"][0]["id"] == animal_id
+    result = await client.get("/api/animals", params={"search": "legacy-42", "species": "goat"},
+                              headers=auth("viewer"))
+    assert result.json() == []

@@ -3794,8 +3794,18 @@ async def list_animals(
         filters.append(Animal.status == status)
     if is_temp_tag is not None:
         filters.append(Animal.is_temp_tag == is_temp_tag)
-    if search:
-        filters.append(or_(Animal.tag_number.ilike(f'%{search}%'), Animal.name.ilike(f'%{search}%')))
+    if search and search.strip():
+        term = search.strip().lower()
+        filters.append(or_(
+            func.lower(Animal.tag_number).contains(term, autoescape=True),
+            func.lower(Animal.name).contains(term, autoescape=True),
+            func.lower(Animal.registry_tag_id).contains(term, autoescape=True),
+            select(AnimalIdentifier.id).where(
+                AnimalIdentifier.animal_id == Animal.id,
+                AnimalIdentifier.is_active == True,
+                func.lower(AnimalIdentifier.id_value).contains(term, autoescape=True),
+            ).exists(),
+        ))
 
     # The related rows are tiny; load only the columns _animal_response reads. Animal columns stay whole
     # because the list response (and Animals.jsx) uses notes and every other field.
@@ -3812,6 +3822,18 @@ async def list_animals(
         query = query.offset((page - 1) * page_size).limit(page_size)
     animals = (await db.execute(query)).scalars().all()
     items = [_animal_response(a) for a in animals]
+    if items:
+        tags_by_animal = {item.id: [] for item in items}
+        identifiers = (await db.execute(select(
+            AnimalIdentifier.animal_id, AnimalIdentifier.id_value,
+        ).where(
+            AnimalIdentifier.animal_id.in_(tags_by_animal),
+            AnimalIdentifier.is_active == True,
+        ).order_by(AnimalIdentifier.id))).all()
+        for animal_id, value in identifiers:
+            tags_by_animal[animal_id].append(value)
+        for item in items:
+            item.search_tags = tags_by_animal[item.id]
     if not paged:
         return items
     total = (await db.execute(select(func.count()).select_from(Animal).where(*filters))).scalar_one()

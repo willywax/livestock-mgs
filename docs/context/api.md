@@ -150,3 +150,6 @@ roles: `from_date`, `to_date`, `event_type`, `page` (default 1), `page_size`
 quantity,result,recorded_by_name`. Newest date/id first; invalid date ranges are
 400, missing animals 404. The existing `/timeline` route is unchanged.
 See [daily reproduction operations](../DAILY_REPRODUCTIVE_SYNC.md).
+
+### Animal tag search
+`GET /api/animals?search=...` matches primary tags, legacy registry IDs, names, and active identifiers of every type. Matching is case-insensitive and supports partial values. Animal list responses include `search_tags` for the register and shared pickers. Exact reproductive tag resolution checks these same tags and rejects ambiguous matches. No database schema change is required.

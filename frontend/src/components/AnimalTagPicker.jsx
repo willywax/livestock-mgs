@@ -1,3 +1,4 @@
+import { animalSearchText } from '../lib/animalSearch';
 import React, { useEffect, useState } from 'react';
 import { Check, X } from '@phosphor-icons/react';
 import { searchAnimals } from '../lib/api';
@@ -189,7 +190,7 @@ function AnimalTagPicker({
                     return (
                       <CommandItem
                         key={a.id}
-                        value={`${a.tag_number} ${a.name || ''} ${a.category_name_sw || ''}${a.is_temp_tag ? ' temp' : ''}`}
+                        value={`${animalSearchText(a)} ${a.category_name_sw || ''}${a.is_temp_tag ? ' temp' : ''}`}
                         onSelect={function () { toggle(a.tag_number); }}
                         disabled={!isSelected && atMax}
                         data-testid={`animal-option-${a.id}`}

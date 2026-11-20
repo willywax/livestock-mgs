@@ -2,7 +2,7 @@
 
 > 2026-11-10 update: daily-log reproductive synchronization and the Daily Log Timeline are deployed to GCP as `9e88f27`, with production SQL migrations applied. See [current behavior, migration and validation](DAILY_REPRODUCTIVE_SYNC.md). The older repository snapshot below is historical.
 
-> 2026-11-20 update: branch `feat/lifetime-calvings` (3 local commits on top of `59a4009`, not pushed or deployed) adds `animals.lifetime_calvings`, a read-only reports router and five Reports-page tabs; see section 10 and decision 0011. Sections not mentioned there were not re-verified in this refresh and may be stale (Unverified).
+> 2026-11-21 release preparation: the changes being merged to `main` add `animals.lifetime_calvings`, a read-only reports router and five Reports-page tabs; see section 10 and decision 0011. Sections not mentioned there were not re-verified in this refresh and may be stale (Unverified).
 
 Refreshed 2026-11-10 from the repo (`main` at `b999dc8` plus an uncommitted working tree). Sections 2, 4-6, 8-11 and 14 were rewritten; the rest was re-checked.
 
@@ -192,10 +192,10 @@ Everything below exists in the repo. Slash commands live in `.claude/skills/<nam
 
 ## 10. Current work
 2026-11-20 branch work (`feat/lifetime-calvings`, committed locally, not pushed or deployed):
-- `dbec6d2`: nullable `animals.lifetime_calvings INTEGER` (startup `ADD COLUMN IF NOT EXISTS`), best-effort `_sync_lifetime_calvings` after cycle create/update/delete. Backfill is a manual UPDATE that has NOT been run on live data; verified on a throwaway Postgres only.
+- `dbec6d2`: nullable `animals.lifetime_calvings INTEGER` (startup `ADD COLUMN IF NOT EXISTS`), best-effort `_sync_lifetime_calvings` after cycle create/update/delete. Backfill is packaged in `backend/migrations/add_lifetime_calvings.sql`; see DEPLOYMENT.md for production execution status.
 - `3f6b210`: `backend/reports_router.py` with `GET /api/reports/calving`, `/reproductive-status`, `/abortions` (any active role). `/api/reports/sales` and `/mortality` are unchanged.
 - `142d9bf`: Reports page tabs Sales Ledger, Mortality (existing endpoints) plus Calving, Reproductive Status, Abortion Log (new endpoints) in `ReportTabs.jsx`; `api.js` append-only. Checked by build only, not in a browser.
-- Deploy order if released: backend first (startup DDL), then run the backfill UPDATE, then frontend. Caveats are in `docs/KNOWN_ISSUES.md` ("Reproduction reports and lifetime_calvings").
+- Deploy order: run `backend/migrations/add_lifetime_calvings.sql` (nullable column plus NULL-only backfill), then backend, then frontend. Caveats are in `docs/KNOWN_ISSUES.md` ("Reproduction reports and lifetime_calvings").
 
 Recent commits on `main` (newest first): `b999dc8` docs: record GCP release of 816dac4; `816dac4` unify event forms and fix event type updates; `5beb38e` mortality dashboard, tag reconciliation, date-range filters; `ff6314c` standalone reproductive events and frontend recording; `9077b23` checkpoint of the animal identifier work; `57199a2` temp-tag UI; `c08f9db` events wired to the animal register.
 

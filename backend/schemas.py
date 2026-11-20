@@ -522,6 +522,7 @@ class AnimalResponse(BaseModel):
     location_name: Optional[str] = None
     created_by_name: Optional[str] = None
     registry_tag_id: Optional[str] = None
+    search_tags: List[str] = Field(default_factory=list)
     is_temp_tag: bool = False
     reproductive_status: str = "unknown"
     last_calving_date: Optional[date] = None

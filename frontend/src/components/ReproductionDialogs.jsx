@@ -1,3 +1,4 @@
+import { animalSearchText, matchesAnimalTag } from '../lib/animalSearch';
 import React, { useState, useEffect, useMemo } from 'react';
 import { addDays, format, parseISO } from 'date-fns';
 import { toast } from 'sonner';
@@ -175,7 +176,7 @@ export function AnimalSelect({ animals, value, onChange, label, disabled, testId
                 {visible.map((a) => (
                   <CommandItem
                     key={a.id}
-                    value={`${a.tag_number} ${a.name || ''} ${a.location_name || ''} ${a.id}`}
+                    value={`${animalSearchText(a)} ${a.location_name || ''} ${a.id}`}
                     onSelect={() => { onChange(a); setOpen(false); }}
                   >
                     <Check className={cn('mr-2 h-4 w-4', value === a.id ? 'opacity-100' : 'opacity-0')} />
@@ -605,7 +606,12 @@ export function RecordCalvingDialog({ open, onClose, onSuccess, cycleId, animalI
         body.calf_sex = sex;
         const wanted = tag.trim().toLowerCase();
         if (wanted) {
-          const match = all.find((a) => a.species === animal.species && a.tag_number.toLowerCase() === wanted);
+          const matches = all.filter((a) => a.species === animal.species && matchesAnimalTag(a, wanted));
+          if (matches.length > 1) {
+            toast.error('This tag matches multiple animals. Use a unique tag.');
+            return;
+          }
+          const match = matches[0];
           if (match) body.calf_animal_id = match.id;
           else noteText = `${noteText ? `${noteText.trim()}\n` : ''}${terms.offspring} tag: ${tag.trim()}`;
         }

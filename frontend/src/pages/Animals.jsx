@@ -1,3 +1,4 @@
+import { animalSearchText } from '../lib/animalSearch';
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -329,8 +330,8 @@ function Animals() {
     if (filterLocation !== 'all' && a.location_id !== parseInt(filterLocation)) return false;
     if (filterStatus !== 'all' && a.status !== filterStatus) return false;
     if (search.trim()) {
-      const q = search.toLowerCase();
-      if (!a.tag_number.toLowerCase().includes(q) && !(a.name || '').toLowerCase().includes(q)) return false;
+      const q = search.trim().toLowerCase();
+      if (!animalSearchText(a).toLowerCase().includes(q)) return false;
     }
     return true;
   });

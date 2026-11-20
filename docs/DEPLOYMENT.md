@@ -1,4 +1,12 @@
 # Deployment
+## Verified release: 2026-11-16 — all animal tag types
+- Deployed the working tree based on `59a4009`, including the animal search changes, to `elitagroup`, `us-central1`.
+- Backend `shamba-backend-tags-20261116` and frontend `srcstock-tags-20261116` are Ready and serve 100% of traffic. Existing runtime configuration retained.
+- Cloud Builds succeeded: backend `20e09fea-f82d-4a0b-81cf-df99372ff048`, frontend `3f2f42d2-3684-401e-9b7b-33b74c83199c`. Images use tag `tags-20261116`.
+- No new database migrations required: search uses existing animal and identifier fields. Existing backend startup checks ran during deployment.
+- Validation: 31 backend tests, 22 frontend tests, syntax lint, import check and production frontend build passed (existing warnings only). Live OpenAPI exposes `search_tags`; frontend HTML and JavaScript returned HTTP 200 and the deployed bundle contains all-tag search. Authenticated browser searches were not exercised.
+- Previous traffic revisions: `shamba-backend-9e88f27` and `srcstock-9e88f27`.
+
 ## Verified release: 2026-11-10 â€” daily-log reproduction
 - Application commit `9e88f27` deployed from a clean Git archive to `elitagroup`, `us-central1`.
 - Backend `shamba-backend-9e88f27` and frontend `srcstock-9e88f27` are Ready and serve 100% of traffic. Existing runtime settings and identities retained.

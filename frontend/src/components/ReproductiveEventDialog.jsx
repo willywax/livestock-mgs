@@ -1,3 +1,4 @@
+import { matchesAnimalTag } from '../lib/animalSearch';
 import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { createReproductiveEvent, getAnimals } from '../lib/api';
@@ -48,7 +49,7 @@ export default function ReproductiveEventDialog({ animal, onClose, onSaved, init
         if (form.bull_tag.trim()) {
           const tag = form.bull_tag.trim();
           const { data: candidates } = await getAnimals({ search: tag, species: animal.species });
-          const matches = candidates.filter((item) => item.sex === 'male' && item.tag_number.toLowerCase() === tag.toLowerCase());
+          const matches = candidates.filter((item) => item.sex === 'male' && matchesAnimalTag(item, tag));
           if (matches.length !== 1) {
             toast.error(matches.length ? 'This tag matches multiple males. Use a unique tag.' : 'No male animal found with that tag for this species.');
             return;
