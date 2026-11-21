@@ -416,7 +416,7 @@ function Reproduction() {
     <div className="space-y-6" data-testid="reproduction-page">
       {/* Header */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <h1 className="font-heading text-3xl font-bold text-primary">Reproduction</h1>
+        <h1 className="font-heading text-3xl font-bold text-primary">Breeding</h1>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={locationId} onValueChange={setLocationId}>
             <SelectTrigger className="w-40" data-testid="repro-location"><SelectValue /></SelectTrigger>

@@ -10,7 +10,7 @@ export const navigation = [
   { ...item('Dashboard', '/'), icon: House },
   { label: 'Animals', icon: Tag, children: [item('Animal Register', '/animals'), item('Transition Queue', '/animals/transitions', writers), item('Tag Reconciliation', '/reconciliation')] },
   { label: 'Daily Logs', icon: CalendarBlank, children: [item('Log List', '/daily-logs'), item('Add Log', '/daily-logs/new', writers)] },
-  { label: 'Reproduction', icon: Horse, children: [item('Status Board', '/reproduction/status'), item('Cycles & Records', '/reproduction'), item('Repeat Breeders', '/repeat-breeders', all, ['/animals/repeat-breeders'])] },
+  { label: 'Breeding', icon: Horse, children: [item('Status Board', '/reproduction/status'), item('Cycles & Records', '/reproduction'), item('Repeat Breeders', '/repeat-breeders', all, ['/animals/repeat-breeders'])] },
   { label: 'Stock', icon: Scales, children: [item('Overview', '/stock'), item('Opening Balances', '/opening-balances', ['admin'])] },
   { label: 'Reports', icon: ChartBar, children: [item('Sales', '/reports/sales'), item('Mortality', '/mortality', all, ['/reports/mortality']), item('Daily / Range Reports', '/reports')] },
   { label: 'Admin', icon: Gear, children: [item('Settings', '/settings', ['admin']), item('Users', '/users', ['admin'], ['/admin/users']), item('Customers', '/customers')] },

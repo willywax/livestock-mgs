@@ -100,6 +100,18 @@ class ReproductiveCycleResponse(BaseModel):
     location_name: Optional[str] = None
     bull_tag_number: Optional[str] = None
 
+class OffspringEntry(BaseModel):
+    animal_id: int
+    tag_number: str
+    name: Optional[str] = None
+    sex: Optional[AnimalSex] = None
+    birth_date: Optional[date] = None
+    status: Optional[str] = None
+    cycle_id: int
+    cycle_number: int
+    calving_date: Optional[date] = None
+
+
 class AnimalReproductiveSummary(BaseModel):
     animal_id: int
     tag_number: str
@@ -108,6 +120,7 @@ class AnimalReproductiveSummary(BaseModel):
     last_calving_date: Optional[date] = None
     current_status: Optional[ReproductiveCycleStatus] = None
     cycles: List[ReproductiveCycleResponse] = []
+    offspring: List[OffspringEntry] = []
 
 class BCSRecordCreate(BaseModel):
     animal_id: int

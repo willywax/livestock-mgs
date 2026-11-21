@@ -106,6 +106,7 @@ from schemas.health import (  # noqa: F401
 )
 from schemas.reproduction import (  # noqa: F401
     AnimalReproductiveSummary,
+    OffspringEntry,
     BCSRecordCreate,
     BCSRecordResponse,
     BCSRecordUpdate,

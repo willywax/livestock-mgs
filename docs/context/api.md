@@ -153,3 +153,6 @@ See [daily reproduction operations](../DAILY_REPRODUCTIVE_SYNC.md).
 
 ### Animal tag search
 `GET /api/animals?search=...` matches primary tags, legacy registry IDs, names, and active identifiers of every type. Matching is case-insensitive and supports partial values. Animal list responses include `search_tags` for the register and shared pickers. Exact reproductive tag resolution checks these same tags and rejects ambiguous matches. No database schema change is required.
+
+## Animal family links (2026-11-21)
+Animal responses include nullable `mother_animal_id`, resolved by mother tag, species and current location in a batched lookup. Reproductive history includes `offspring` entries for calves linked by `reproductive_cycles.calf_animal_id`, with animal ID, tag, name, sex, birth date, status, cycle ID/number and calving date. These are derived response fields, not new database columns.

@@ -49,6 +49,7 @@ class AnimalResponse(BaseModel):
     sex: AnimalSex
     birth_date: Optional[date]
     mother_tag: Optional[str]
+    mother_animal_id: Optional[int] = None
     father_tag: Optional[str]
     acquisition_type: AnimalAcquisitionType
     acquisition_date: date

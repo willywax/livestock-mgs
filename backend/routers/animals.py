@@ -1,6 +1,7 @@
 """Individual animal register: CRUD, import, lookup, transfer, tag replacement."""
 import csv
 import io
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Union
 
@@ -19,11 +20,43 @@ from services.common import REPEAT_BREEDER_THRESHOLD
 from services.stock import apply_event_to_stock
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ==================== ANIMAL ROUTES ====================
 
-def _animal_response(animal: Animal) -> AnimalResponse:
+async def _mother_animal_ids(db: AsyncSession, animals: List[Animal]) -> dict:
+    """Map animal.id -> id of the dam animal (same tag, species and location), or None.
+
+    One batched query for all animals; never raises (logs a warning instead).
+    """
+    ids = {a.id: None for a in animals}
+    try:
+        tags = {a.mother_tag.strip() for a in animals if a.mother_tag and a.mother_tag.strip()}
+        if not tags:
+            return ids
+        rows = (await db.execute(
+            select(Animal.id, Animal.tag_number, Animal.species, Animal.location_id)
+            .where(Animal.tag_number.in_(tags)).order_by(Animal.id)
+        )).all()
+        lookup = {}
+        for row in rows:
+            lookup.setdefault((row.tag_number, row.species, row.location_id), row.id)
+        for a in animals:
+            if a.mother_tag and a.mother_tag.strip():
+                ids[a.id] = lookup.get((a.mother_tag.strip(), a.species, a.location_id))
+    except Exception as exc:  # response building must never fail on this lookup
+        logger.warning("mother_animal_id lookup failed: %s", exc)
+    return ids
+
+
+async def _animal_response_resolved(db: AsyncSession, animal: Animal) -> AnimalResponse:
+    ids = await _mother_animal_ids(db, [animal])
+    return _animal_response(animal, ids.get(animal.id))
+
+
+def _animal_response(animal: Animal, mother_animal_id: Optional[int] = None) -> AnimalResponse:
     return AnimalResponse(
+        mother_animal_id=mother_animal_id,
         id=animal.id,
         tag_number=animal.tag_number,
         name=animal.name,
@@ -151,7 +184,8 @@ async def list_animals(
         page_size = page_size or 50
         query = query.offset((page - 1) * page_size).limit(page_size)
     animals = (await db.execute(query)).scalars().all()
-    items = [_animal_response(a) for a in animals]
+    mother_ids = await _mother_animal_ids(db, animals)
+    items = [_animal_response(a, mother_ids.get(a.id)) for a in animals]
     if items:
         tags_by_animal = {item.id: [] for item in items}
         identifiers = (await db.execute(select(
@@ -214,7 +248,7 @@ async def create_animal(
             selectinload(Animal.creator),
         ).where(Animal.id == animal_id)
     )
-    return _animal_response(result.scalar_one())
+    return await _animal_response_resolved(db, result.scalar_one())
 
 @router.post("/animals/bulk-import", response_model=BulkImportResult)
 async def bulk_import_animals(
@@ -394,7 +428,7 @@ async def lookup_animal_by_id(
     if len(matches) > 1:
         raise HTTPException(status_code=409, detail="Identifier matches multiple animals")
     animal, identifier = matches[0]
-    return AnimalLookupResponse(animal=_animal_response(animal),
+    return AnimalLookupResponse(animal=await _animal_response_resolved(db, animal),
                                 matched_id=AnimalIdentifierResponse.model_validate(identifier))
 
 
@@ -437,7 +471,7 @@ async def get_animal(
     animal = result.scalar_one_or_none()
     if not animal:
         raise HTTPException(status_code=404, detail="Animal not found")
-    return _animal_response(animal)
+    return await _animal_response_resolved(db, animal)
 
 @router.get("/animals/{animal_id}/location-history", response_model=List[AnimalLocationHistoryResponse])
 async def get_animal_location_history(
@@ -577,7 +611,7 @@ async def update_animal(
             selectinload(Animal.creator),
         ).where(Animal.id == animal_id)
     )
-    return _animal_response(result.scalar_one())
+    return await _animal_response_resolved(db, result.scalar_one())
 
 @router.post("/animals/{animal_id}/transfer", response_model=AnimalResponse)
 async def transfer_animal(
@@ -674,4 +708,4 @@ async def transfer_animal(
             selectinload(Animal.creator),
         ).where(Animal.id == animal_id)
     )
-    return _animal_response(result.scalar_one())
+    return await _animal_response_resolved(db, result.scalar_one())

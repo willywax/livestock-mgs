@@ -19,19 +19,19 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); });
 
 test('auto-expands the active alias parent and persists toggles', () => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ Reproduction: false, Animals: false }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ Breeding: false, Animals: false }));
   act(() => root.render(<SidebarNavigation role="viewer" />));
-  const reproduction = container.querySelector('[aria-controls="nav-group-reproduction"]');
-  expect(reproduction.getAttribute('aria-expanded')).toBe('true');
+  const breeding = container.querySelector('[aria-controls="nav-group-breeding"]');
+  expect(breeding.getAttribute('aria-expanded')).toBe('true');
   expect(container.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   expect(container.querySelector('[aria-current="page"]').textContent).toContain('Repeat Breeders');
-  act(() => reproduction.click());
-  expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).Reproduction).toBe(false);
+  act(() => breeding.click());
+  expect(JSON.parse(localStorage.getItem(STORAGE_KEY)).Breeding).toBe(false);
   act(() => root.unmount());
   root = createRoot(container);
   mockPath = '/';
   act(() => root.render(<SidebarNavigation role="viewer" />));
-  expect(container.querySelector('[aria-controls="nav-group-reproduction"]').getAttribute('aria-expanded')).toBe('false');
+  expect(container.querySelector('[aria-controls="nav-group-breeding"]').getAttribute('aria-expanded')).toBe('false');
 });
 
 test('uses the most specific route and hides restricted links', () => {

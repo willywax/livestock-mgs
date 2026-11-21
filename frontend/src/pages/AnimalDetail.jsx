@@ -597,6 +597,16 @@ function IdentityCard({ animal, canWrite, isAdmin, onReplaceTag, reproductiveSum
             Repeat breeder ({reproductiveSummary.services_without_conception} services)
           </Badge>}
         </div> : <p className="text-sm text-muted-foreground">Reproductive summary unavailable</p>}
+        {animal.mother_tag && (
+          <p className="text-sm" data-testid="dam-tag">
+            <span className="text-muted-foreground">Dam: </span>
+            {animal.mother_animal_id ? (
+              <Link to={`/animals/${animal.mother_animal_id}`} className="text-primary underline underline-offset-2">
+                {animal.mother_tag}
+              </Link>
+            ) : animal.mother_tag}
+          </p>
+        )}
         <p className="text-sm">{animal.location_name || '—'}</p>
         <div><Badge className={STATUS_BADGE[animal.status]}>{animal.status}</Badge></div>
         <p className="text-sm text-muted-foreground">
@@ -857,6 +867,17 @@ function CycleCard({ cycle, terms, species, isLatest, canWrite, onAction }) {
                     {cycle.calving_outcome && (
                       <Badge className={OUTCOME_BADGE[cycle.calving_outcome]}>{outcomeLabel[cycle.calving_outcome]}</Badge>
                     )}
+                    {cycle.calf_animal_id && (
+                      <p className="mt-1">
+                        <Link
+                          to={`/animals/${cycle.calf_animal_id}`}
+                          className="text-primary underline underline-offset-2"
+                          data-testid={`calf-link-${cycle.id}`}
+                        >
+                          View {terms.offspring.toLowerCase()}
+                        </Link>
+                      </p>
+                    )}
                   </>
                 ) : <p>—</p>}
               </div>
@@ -992,6 +1013,40 @@ function ReproductionTab({ animal, history, loading, canWrite, onChanged }) {
           </Card>
         ))}
       </div>
+      {history.offspring?.length > 0 && (
+        <Card data-testid="offspring-list">
+          <CardContent className="p-4 space-y-2">
+            <h3 className="font-heading text-lg font-semibold">{terms.offspring} records</h3>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tag</TableHead>
+                  <TableHead>Sex</TableHead>
+                  <TableHead>Born</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Cycle</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {history.offspring.map((o) => (
+                  <TableRow key={o.animal_id}>
+                    <TableCell>
+                      <Link to={`/animals/${o.animal_id}`} className="text-primary underline underline-offset-2">
+                        {o.tag_number}
+                      </Link>
+                      {o.name && <span className="ml-2 text-muted-foreground">{o.name}</span>}
+                    </TableCell>
+                    <TableCell className="capitalize">{o.sex || '—'}</TableCell>
+                    <TableCell>{fmt(o.birth_date || o.calving_date)}</TableCell>
+                    <TableCell className="capitalize">{o.status || '—'}</TableCell>
+                    <TableCell>#{o.cycle_number}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
       {history.cycles.length === 0 ? (
         <p className="text-sm text-muted-foreground">No reproductive history recorded</p>
       ) : (
@@ -1322,7 +1377,7 @@ function AnimalDetail() {
             <TabsList>
               <TabsTrigger value="timeline">Timeline</TabsTrigger>
               <TabsTrigger value="daily-log-timeline">Daily Log Timeline</TabsTrigger>
-              <TabsTrigger value="reproduction">Reproduction</TabsTrigger>
+              <TabsTrigger value="reproduction">Breeding</TabsTrigger>
               <TabsTrigger value="bcs">BCS</TabsTrigger>
               <TabsTrigger value="notes">Notes</TabsTrigger>
               <TabsTrigger value="movements">Movement history</TabsTrigger>

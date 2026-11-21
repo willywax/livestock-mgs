@@ -26,8 +26,8 @@ Done 2026-11-08: Animal detail page `/animals/:id` (branch `ft/animal-detail`).
 ## Status board delivery (2026-11-10)
 Implemented the nine-bucket reproductive status board and collapsible sidebar groups. Remaining navigation work: implement Transition Queue, Stock Overview, Sales Report and Customers frontend pages at their requested routes. Existing links and role restrictions are retained. No deployment is included in this change.
 
-## Reports tabs follow-ups (2026-11-20)
-Decide whether the new Sales Ledger and Abortion Log tabs replace the analytics-based Sales and Abortions tabs, add a `/reports/sales` frontend route (or repoint the sidebar link), and consider an abortion-date filter that is not `created_at`. Nothing here is deployed.
+## Reports page follow-ups (2026-11-20, updated 2026-11-21)
+The Reports page is now a card catalog (11 reports in five groups) with a detail panel and client-side CSV export; the old tab duplication is gone. Remaining: browser-check it, delete unused `components/ReportTabs.jsx`, decide whether to restore the dropped analytics cards (deaths by cause, per-species abortions and sales) in Herd Analytics, add a `/reports/sales` frontend route (or repoint the sidebar link), and consider an abortion-date filter that is not `created_at`. Nothing here is deployed.
 
 ## List performance (2026-11-10)
 Done: opt-in pagination on `GET /api/animals` and `GET /api/daily-logs` (bare list stays the default so existing consumers keep working), `event_count` on daily-log rows, column pruning on embedded events and related rows, and a single-query transition queue (SQL birth-date cutoff). Remaining: move Animals.jsx / DailyLogs.jsx to paged requests (then the default can change), and an optional SQL rewrite of the status board (left as is: two queries, overlapping Python-side buckets).

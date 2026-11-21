@@ -7,7 +7,7 @@ from auth import require_roles
 from database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from models import Animal, AnimalSex, BullAssignment, CalvingOutcome, ReproductiveCycle, ReproductiveCycleStatus, User, UserRole
-from schemas import AnimalReproductiveSummary, ReproductiveCycleCreate, ReproductiveCycleResponse, ReproductiveCycleUpdate
+from schemas import AnimalReproductiveSummary, OffspringEntry, ReproductiveCycleCreate, ReproductiveCycleResponse, ReproductiveCycleUpdate
 from sqlalchemy import and_, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -243,7 +243,27 @@ async def get_animal_reproductive_history(
     cycles = result.scalars().all()
     calved = [c for c in cycles if c.actual_calving_date and c.calving_outcome != CalvingOutcome.ABORTION]
     intervals = [c.calving_interval_days for c in calved if c.calving_interval_days is not None]
+    calf_ids = {c.calf_animal_id for c in cycles if c.calf_animal_id}
+    calves = {}
+    if calf_ids:
+        rows = await db.execute(select(Animal).where(Animal.id.in_(calf_ids)))
+        calves = {a.id: a for a in rows.scalars().all()}
+    offspring = [
+        OffspringEntry(
+            animal_id=c.calf_animal_id,
+            tag_number=calves[c.calf_animal_id].tag_number,
+            name=calves[c.calf_animal_id].name,
+            sex=calves[c.calf_animal_id].sex,
+            birth_date=calves[c.calf_animal_id].birth_date,
+            status=getattr(calves[c.calf_animal_id].status, "value", calves[c.calf_animal_id].status),
+            cycle_id=c.id,
+            cycle_number=c.cycle_number,
+            calving_date=c.actual_calving_date,
+        )
+        for c in cycles if c.calf_animal_id in calves
+    ]
     return AnimalReproductiveSummary(
+        offspring=offspring,
         animal_id=animal.id,
         tag_number=animal.tag_number,
         total_calvings=len(calved),
