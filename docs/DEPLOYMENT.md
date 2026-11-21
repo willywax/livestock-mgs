@@ -1,4 +1,15 @@
 # Deployment
+## Verified release: 2026-11-21 - modular backend, family links and Reports catalog
+- Application commit `984f42d` pushed to `main`; built from a clean Git archive and deployed to `elitagroup`, `us-central1`.
+- Backend `shamba-backend-984f42d` and frontend `srcstock-984f42d` serve 100% of traffic. Runtime configuration retained.
+- Successful Cloud Builds: backend `8ebcc73d-478e-4f78-80b2-b137beb2e0c6`, frontend `ea24c31d-a7d0-4fbb-8864-183bcccf3f53`. Images tagged `984f42d`.
+- Reran `add_daily_reproductive_sync.sql`, `add_perf_indexes.sql` and `add_lifetime_calvings.sql` successfully. Lifetime counter backfill updated zero rows; no uninitialized counters or invalid indexes. No new schema columns were required. Historical event-link backfill was not run.
+- Checks passed: 246 backend tests, 35 frontend tests, import smoke check, syntax lint and production build (existing warnings only). Updated the sidebar test to use the new Breeding label. All 133 existing API operations preserved.
+- Read-only production checks passed for all 29 ORM tables and the batched mother lookup. Local PostgreSQL startup validation was unavailable because Docker was stopped; deployment startup succeeded.
+- Live OpenAPI includes mother_animal_id and offspring; unauthenticated animal access returns HTTP 403. Reports page and bundle `main.53c2d8bb.js` return HTTP 200; bundle includes the Reports catalog, Run Report, Breeding and family links. Interactive login and browser workflows were not exercised.
+- Frontend deployment initially encountered a temporary DNS failure; retry succeeded.
+- Rollback traffic targets: `shamba-backend-8fcc4ca` and `srcstock-8fcc4ca`. Keep the additive schema in place.
+
 ## Verified release: 2026-11-21 - reports, reproduction KPIs and lifetime calvings
 - Application commit `8fcc4ca` pushed to `main` and deployed from a clean Git archive to `elitagroup`, `us-central1`.
 - Backend `shamba-backend-8fcc4ca` and frontend `srcstock-8fcc4ca` are Ready and serve 100% of traffic. Existing runtime configuration and identities retained.
