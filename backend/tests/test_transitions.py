@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy import select
 
-import server
+from services import transitions as transitions_svc
 from conftest import FARM_ID, auth, category_id, make_stock, stock_count
 from models import (
     Animal, AnimalAcquisitionType, AnimalSex, AnimalStatus, CategoryTransition, CategoryTransitionRule,
@@ -17,7 +17,7 @@ CATTLE = SpeciesType.CATTLE
 
 
 async def seeded(db):
-    await server._seed_category_transition_rules(db)
+    await transitions_svc._seed_category_transition_rules(db)
 
 
 async def make_animal(db, tag, cat_name, sex, birth=None, status=AnimalStatus.ACTIVE):
@@ -38,7 +38,7 @@ async def test_seed_creates_rules_once(db_session):
     await seeded(db_session)
     first = (await db_session.execute(select(CategoryTransitionRule))).scalars().all()
     assert len(first) == 15  # 5 per species
-    assert await server._seed_category_transition_rules(db_session) == 0  # idempotent
+    assert await transitions_svc._seed_category_transition_rules(db_session) == 0  # idempotent
 
 
 async def test_confirm_updates_category_and_moves_stock(client, db_session):

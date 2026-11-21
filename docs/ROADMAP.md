@@ -11,6 +11,7 @@ Sizes: S = under a day, M = a few days, L = a week or more (estimates, Unverifie
 | R12 | (done 2026-11-08, branch `ft/animal-detail`) Animal detail page for reproduction/profile; remaining: browser verification with real data and a GCS bucket | S | K22, K25 | Needs `GCS_BUCKET_NAME` configured for photos |
 | R13 | Backend: species-aware gestation default (sheep 147, goat 150) instead of the 283-day constant. The `species` filter on `/analytics/reproduction` and removal of the browser-side KPI maths were done 2026-11-20 (uncommitted at the time) | S | K23, K24 | Additive backend change |
 | R11 | Chemical rotation policy/inventory and notifications | L | PRD backlog | |
+| R14 | Optional follow-up to decision 0012: break up the largest modules (`routers/daily_logs.py`, `routers/reports.py` analytics handler, `services/animal_sync.py`); tidy cross-module underscore imports | M | maintainability | Behaviour-neutral; verify with the OpenAPI/DDL diff method in decision 0012 |
 
 Done 2026-11-08: R1 (close unauthenticated reads) on `ft/r1-auth-hardening`; follow-up K21 needs a frontend change.
 Done 2026-11-08: backend reproduction/animal-profile schema and routes (branch `ft/repro-schema`, decision 0008). Follow-ups: R13 backend species support; K22 verify on the PostgreSQL test DB and a real GCS bucket.

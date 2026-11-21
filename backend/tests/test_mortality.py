@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from conftest import FARM_ID, auth, category_id, make_daily_log, make_location
 from models import DeathCause, Event, EventType, OpeningBalance, SpeciesType
-from server import _seed_death_causes
+from services.seed import _seed_death_causes
 
 pytestmark = pytest.mark.asyncio
 

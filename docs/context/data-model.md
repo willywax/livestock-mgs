@@ -7,7 +7,7 @@ Snapshot: 2026-10-08. This is declared source schema, not verified live schema. 
 Notation: `?` nullable; `!` NOT NULL; PK primary key; UQ unique; IX single-column index; FK names the target and delete behavior. Defaults are ORM-side unless marked server. SQLAlchemy Column without nullable is nullable unless PK; Mapped annotations infer nullability and SQL type when omitted.
 
 ## users / User
-Source: `backend/models.py:32`.
+Source: `backend/models/core.py`.
 
 - `id: Integer ! [PK; IX]`; `phone: String(20) ! [UQ; IX]`; `password_hash: String(255) !`.
 - `name: String(100) !`; `role: SQLEnum(UserRole) ! [default=UserRole.VIEWER]`; `is_active: Boolean ? [default=True]`.
@@ -15,7 +15,7 @@ Source: `backend/models.py:32`.
 - ORM relationships: none declared.
 
 ## locations / Location
-Source: `backend/models.py:44`.
+Source: `backend/models/core.py`.
 
 - `id: Integer ! [PK; IX]`; `name: String(100) ! [UQ]`; `description: Text ?`.
 - `is_active: Boolean ? [default=True]`; `created_at: DateTime(timezone=True) ? [default=UTC now]`; `created_by: Integer ? [FK users.id]`.
@@ -23,7 +23,7 @@ Source: `backend/models.py:44`.
 - ORM relationships: none declared.
 
 ## categories / Category
-Source: `backend/models.py:56`.
+Source: `backend/models/core.py`.
 
 - `id: Integer ! [PK; IX]`; `name_sw: String(100) !`; `name_en: String(100) !`.
 - `species: SQLEnum(SpeciesType) !`; `sort_order: Integer ? [default=0]`; `is_active: Boolean ? [default=True]`.
@@ -31,7 +31,7 @@ Source: `backend/models.py:56`.
 - ORM relationships: none declared.
 
 ## opening_balances / OpeningBalance
-Source: `backend/models.py:68`.
+Source: `backend/models/core.py`.
 
 - `id: Integer ! [PK; IX]`; `location_id: Integer ! [FK locations.id]`; `species: SQLEnum(SpeciesType) !`.
 - `category_id: Integer ! [FK categories.id]`; `count: Integer ! [default=0]`; `period_start: Date !`.
@@ -41,7 +41,7 @@ Source: `backend/models.py:68`.
 - ORM relationships: `location=relationship('Location')`; `category=relationship('Category')`.
 
 ## daily_logs / DailyLog
-Source: `backend/models.py:87`.
+Source: `backend/models/core.py`.
 
 - `id: Integer ! [PK; IX]`; `location_id: Integer ! [FK locations.id]`; `log_date: Date !`.
 - `has_events: Boolean ? [default=False]`; `notes: Text ?`; `is_locked: Boolean ? [default=False]`.
@@ -51,14 +51,14 @@ Source: `backend/models.py:87`.
 - ORM relationships: `location=relationship('Location')`; `events=relationship('Event', back_populates='daily_log', cascade='all, delete-orphan')`.
 
 ## diseases / Disease
-Source: `backend/models.py:129`.
+Source: `backend/models/core.py`.
 
 - `id: Integer ! [PK; IX]`; `name: String(255) ! [UQ]`; `description: Text ?`.
 - `species: SQLEnum(SpeciesType) ?`; `is_active: Boolean ? [default=True]`; `created_at: DateTime(timezone=True) ? [default=UTC now]`.
 - ORM relationships: none declared.
 
 ## events / Event
-Source: `backend/models.py:140`.
+Source: `backend/models/core.py`.
 
 - `id: Integer ! [PK; IX]`; `daily_log_id: Integer ! [FK daily_logs.id]`; `event_type: SQLEnum(EventType) !`.
 - `species: SQLEnum(SpeciesType) !`; `category_id: Integer ? [FK categories.id]`; `count: Integer ! [default=0]`.
@@ -73,7 +73,7 @@ Source: `backend/models.py:140`.
 - ORM relationships: `daily_log=relationship('DailyLog', back_populates='events')`; `category=relationship('Category', foreign_keys=[category_id])`; `from_category=relationship('Category', foreign_keys=[from_category_id])`; `to_category=relationship('Category', foreign_keys=[to_category_id])`; `from_location=relationship('Location', foreign_keys=[from_location_id])`; `to_location=relationship('Location', foreign_keys=[to_location_id])`; `disease=relationship('Disease', foreign_keys=[disease_id])`.
 
 ## stock_levels / StockLevel
-Source: `backend/models.py:196`.
+Source: `backend/models/core.py`.
 
 - `id: Integer ! [PK; IX]`; `location_id: Integer ! [FK locations.id]`; `species: SQLEnum(SpeciesType) !`.
 - `category_id: Integer ! [FK categories.id]`; `current_count: Integer ! [default=0]`; `last_updated: DateTime(timezone=True) ? [default=UTC now]`.
@@ -81,7 +81,7 @@ Source: `backend/models.py:196`.
 - ORM relationships: `location=relationship('Location')`; `category=relationship('Category')`.
 
 ## animals / Animal
-Source: `backend/models.py:212`.
+Source: `backend/models/animals.py`.
 
 - `id: Integer ! [PK; IX]`; `tag_number: String(100) ! [IX]`; `name: String(100) ?`.
 - `species: SQLEnum(SpeciesType) !`; `category_id: Integer ! [FK categories.id]`; `location_id: Integer ! [FK locations.id]`.
@@ -96,7 +96,7 @@ Source: `backend/models.py:212`.
 - ORM relationships: `category=relationship('Category')`; `location=relationship('Location')`; `creator=relationship('User', foreign_keys=[created_by])`.
 
 ## health_intervals / HealthInterval
-Source: `backend/models.py:254`.
+Source: `backend/models/health.py`.
 
 - `id: Integer ! [PK; IX]`; `location_id: Integer ! [FK locations.id]`; `species: SQLEnum(SpeciesType) !`.
 - `event_type: SQLEnum(HealthEventType) !`; `interval_days: Integer !`; `notes: Text ?`.
@@ -105,7 +105,7 @@ Source: `backend/models.py:254`.
 - ORM relationships: `location=relationship('Location')`; `creator=relationship('User', foreign_keys=[created_by])`.
 
 ## farm_health_events / FarmHealthEvent
-Source: `backend/models.py:274`.
+Source: `backend/models/health.py`.
 
 - `id: Integer ! [PK; IX]`; `location_id: Integer ! [FK locations.id]`; `event_type: SQLEnum(HealthEventType) !`.
 - `event_date: Date !`; `species: SQLEnum(SpeciesType) ?`; `category_scope: SQLEnum(CategoryScope) ?`.
@@ -116,7 +116,7 @@ Source: `backend/models.py:274`.
 - ORM relationships: `location=relationship('Location')`; `creator=relationship('User', foreign_keys=[created_by])`; `vaccine_type=relationship('VaccineType')`.
 
 ## vaccine_types / VaccineType
-Source: `backend/models.py:302`.
+Source: `backend/models/health.py`.
 
 - `id: Integer ! [PK; IX]`; `name: String(255) ! [UQ]`; `description: Text ?`.
 - `species_applicability: JSON ?`; `default_interval_days: Integer ?`; `is_active: Boolean ? [default=True]`.
@@ -128,15 +128,15 @@ Table remains in existing databases as inert data (columns were: id UUID PK, sou
 
 ## Enum values
 
-- `UserRole`: ADMIN=admin, DATA_ENTRY=data_entry, VIEWER=viewer (`backend/models.py:9`).
-- `EventType`: BIRTH=birth, DEATH=death, SOLD=sold, MISSING=missing, GIFT_IN=gift_in, GIFT_OUT=gift_out, BOUGHT=bought, TRANSFER=transfer, CATEGORY_CHANGE=category_change, ABORTION=abortion, WEANING=weaning (`backend/models.py:14`).
-- `SpeciesType`: CATTLE=cattle, SHEEP=sheep, GOAT=goat (`backend/models.py:27`).
-- `AbortionStage`: EARLY=early, MID=mid, LATE=late (`backend/models.py:108`).
-- `AnimalSex`: MALE=male, FEMALE=female (`backend/models.py:113`).
-- `AnimalAcquisitionType`: BORN=born, BOUGHT=bought, GIFT_IN=gift_in (`backend/models.py:117`).
-- `AnimalStatus`: ACTIVE=active, SOLD=sold, DEAD=dead, TRANSFERRED=transferred, MISSING=missing (`backend/models.py:122`).
-- `HealthEventType`: DIPPING=dipping, VACCINATION=vaccination, DEWORMING=deworming, LOG=log (`backend/models.py:243`).
-- `CategoryScope`: ALL=all, SPECIFIC=specific (`backend/models.py:249`).
+- `UserRole`: ADMIN=admin, DATA_ENTRY=data_entry, VIEWER=viewer (`backend/models/` package).
+- `EventType`: BIRTH=birth, DEATH=death, SOLD=sold, MISSING=missing, GIFT_IN=gift_in, GIFT_OUT=gift_out, BOUGHT=bought, TRANSFER=transfer, CATEGORY_CHANGE=category_change, ABORTION=abortion, WEANING=weaning (`backend/models/` package).
+- `SpeciesType`: CATTLE=cattle, SHEEP=sheep, GOAT=goat (`backend/models/` package).
+- `AbortionStage`: EARLY=early, MID=mid, LATE=late (`backend/models/` package).
+- `AnimalSex`: MALE=male, FEMALE=female (`backend/models/` package).
+- `AnimalAcquisitionType`: BORN=born, BOUGHT=bought, GIFT_IN=gift_in (`backend/models/` package).
+- `AnimalStatus`: ACTIVE=active, SOLD=sold, DEAD=dead, TRANSFERRED=transferred, MISSING=missing (`backend/models/` package).
+- `HealthEventType`: DIPPING=dipping, VACCINATION=vaccination, DEWORMING=deworming, LOG=log (`backend/models/` package).
+- `CategoryScope`: ALL=all, SPECIFIC=specific (`backend/models/` package).
 
 ## Foreign-key ER diagram
 
@@ -212,7 +212,7 @@ erDiagram
 Diagram shows physical foreign keys only. Free-text category/location/status/tag references and JSON arrays do not imply relational constraints.
 
 ## Reproduction and animal profile tables (added 2026-11-08)
-Source: `backend/models.py` (appended block "REPRODUCTION & ANIMAL PROFILE"). New tables only; no existing table, column or enum changed. Created by `create_all` on next startup. PostgreSQL enum labels are the uppercase member NAMES (same as every existing enum); Python/API values are lowercase.
+Source: `backend/models/health.py`.
 New enums: `ServiceType {natural, ai}`, `PDResult {pregnant, open, repeat}`, `ReproductiveCycleStatus {open, served, pregnant, calved, aborted}`, `CalvingOutcome {live_calf, stillbirth, abortion, assisted_live, assisted_dead}`, `NoteType {observation, weight, measurement, incident, health, other}`. Reused: `AnimalSex`, `AbortionStage`.
 
 ## bull_assignments / BullAssignment
@@ -258,10 +258,10 @@ Append-only log of animal moves; written by the event-to-register sync on TRANSF
 
 - High: startup uses create_all plus a small set of nullable ALTER additions; it does not evolve existing enum types, nullability or constraints (`backend/server.py:98`, `backend/database.py:55`). Alembic is installed but no migration directory/config is present.
 - Required policy: nullable `ADD COLUMN IF NOT EXISTS` only for future column additions. Never rely on create_all to change an existing table. New tables/indexes need an explicit reviewed plan; this analysis executes no DDL.
-- Non-additive candidates: `animals.birth_date/status/tag_number/sex/species/category_id/location_id` if identity ownership changes; do not drop/rename/retype these in place (`backend/models.py:212`). Introduce nullable references/projections and transition reads first.
-- `animals` uniqueness includes mutable location, and `registry_tag_id` is indexed but not unique (inert legacy column) (`backend/models.py:231`, `backend/models.py:240`); global identity enforcement requires reconciliation before any uniqueness change.
-- SQLEnum-backed user roles, species, event types, abortion stages, animal sex/acquisition/status, health event/scope require explicit PostgreSQL enum work if members change. Python enum edits alone are insufficient (`backend/models.py:9`).
-- `events.animal_tags/offspring_tags` CSV text, `farm_health_events.category_ids` JSON, Float costs, and integer sale_price require a parallel representation/backfill if normalized or made precise; no destructive conversion (`backend/models.py:159`, `backend/models.py:178`, `backend/models.py:284`).
+- Non-additive candidates: `animals.birth_date/status/tag_number/sex/species/category_id/location_id` if identity ownership changes; do not drop/rename/retype these in place (`backend/models/` package). Introduce nullable references/projections and transition reads first.
+- `animals` uniqueness includes mutable location, and `registry_tag_id` is indexed but not unique (inert legacy column) (`backend/models/` package, `backend/models/` package); global identity enforcement requires reconciliation before any uniqueness change.
+- SQLEnum-backed user roles, species, event types, abortion stages, animal sex/acquisition/status, health event/scope require explicit PostgreSQL enum work if members change. Python enum edits alone are insufficient (`backend/models/` package).
+- `events.animal_tags/offspring_tags` CSV text, `farm_health_events.category_ids` JSON, Float costs, and integer sale_price require a parallel representation/backfill if normalized or made precise; no destructive conversion (`backend/models/` package, `backend/models/` package, `backend/models/` package).
 - Added 2026-11-10 (script `backend/migrations/add_perf_indexes.sql`, models `__table_args__`): animals `ix_animals_{location_id,category_id,reproductive_status,birth_date}`, `ix_animals_species_category_status (species, category_id, status)`, `ix_animals_location_status (location_id, status)`; `ix_daily_logs_log_date`; `ix_events_daily_log_id`, `ix_events_event_type`; `ix_repro_events_{event_type,event_date}`, `ix_repro_events_animal_date (animal_id, event_date)`; `ix_animal_identifiers_id_value`, `ix_animal_identifiers_type_value (id_type, id_value)`; `ix_category_transitions_date`; `ix_recon_entries_match_status`. Existing DBs get them only when the owner runs the SQL.
 - Remaining index candidates: `farm_health_events(location_id,event_type,species,event_date)` / next_due_date. Existing PK/UQ indexes are listed above; validate with query plans later (`backend/server.py:2014`, `backend/server.py:3658`).
 

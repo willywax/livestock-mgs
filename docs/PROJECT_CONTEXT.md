@@ -17,7 +17,7 @@ Line numbers quoted from the repo analysis drift quickly; treat them as hints an
 - Users (roles): `admin`, `data_entry` (office staff entering logs), `viewer` (read-only). Login is by phone number + password (JWT).
 - Status: actively developed and in use. `docs/KNOWN_ISSUES.md` (K22) records a production check on 2026-11-08 and `git log` records a GCP release of `816dac4` on 2026-11-09; current live state is Unverified.
 - Last updated: 2026-11-20 (targeted refresh; the 2026-11-10 body is otherwise unchanged).
-- Branch/commit (2026-11-20): working branch `feat/lifetime-calvings` at `142d9bf`, 3 commits ahead of `main` (`59a4009`); the working tree still holds other uncommitted work (animal-search frontend, `schemas.py`, `test_identifiers.py`, `DEPLOYMENT.md`). Earlier snapshot (2026-11-10): `main` at `b999dc8` ("docs: record GCP release of 816dac4"), 3 commits ahead of `origin/main` per `git rev-list` (push state beyond that is Unverified). The working tree is NOT clean: 23 modified and 11 untracked paths (listed in section 10), nothing of it committed. Older local branches (`ft/*`, `chore/*`, `ft-edit-event`, `ft-schedule`, `new-ft`) were not re-inspected (Unverified).
+- Branch/commit (2026-11-20): working branch `feat/lifetime-calvings` at `142d9bf`, 3 commits ahead of `main` (`59a4009`); the working tree still holds other uncommitted work (animal-search frontend, `schemas/`, `test_identifiers.py`, `DEPLOYMENT.md`). Earlier snapshot (2026-11-10): `main` at `b999dc8` ("docs: record GCP release of 816dac4"), 3 commits ahead of `origin/main` per `git rev-list` (push state beyond that is Unverified). The working tree is NOT clean: 23 modified and 11 untracked paths (listed in section 10), nothing of it committed. Older local branches (`ft/*`, `chore/*`, `ft-edit-event`, `ft-schedule`, `new-ft`) were not re-inspected (Unverified).
 - Recent feature history (newest first, from `git log` and the working tree): category transitions (rules, queue, confirm, audit; decision 0010, uncommitted); register CSV export, sex filter, event-form category auto-fill (uncommitted); reproductive status board `/reproduction/status` and sidebar navigation (uncommitted); unified event forms (`816dac4`); mortality dashboard, tag reconciliation and date-range filters (`5beb38e`); standalone reproductive events with frontend recording (`ff6314c`); animal identifiers; sales/customers; temp tags; event-to-register sync (decision 0009); animal profile page; reproduction/photos backend (decision 0008); Registry removal (decision 0007); auth hardening of 13 GET routes.
 - Event-to-register sync (decision 0009): daily-log events update matching `animals` rows (status, location, category, auto-created animals) and write `animal_location_history`, best-effort after the stock commit; `EventResponse.sync_warnings` reports skipped tags. Birth events with blank/`NEW`/`TEMP` offspring tags auto-create `TEMP-<LOC>-<YYYYMMDD>-NNN` animals; `POST /api/animals/{id}/replace-tag` swaps in the real tag.
 - Category transitions (decision 0010, uncommitted): animals move up a sex-specific chain by age (7 and 18 months by default) or on first calving. Confirming changes `animals.category_id` and moves one head between `stock_levels` rows in one transaction; it writes no daily-log event, so do not also log a `category_change` for the same move.
@@ -45,10 +45,13 @@ livestock-mgs/
   README.md                 placeholder only
   README_DEPLOY_GCP.md      Cloud Run deploy notes (region and one frontend command are out of date)
   backend/
-    server.py               ~6,900 lines (129 route handlers): FastAPI app, ALL routes, startup DDL+seed, stock logic, health logic,
-                            reproduction, reconciliation, mortality, sales, category-transition blocks (all above `include_router`)
+    server.py               ~70 lines: app wiring only (CORS, startup/shutdown, router registration). Split on 2026-11-21 (decision 0012)
+    bootstrap.py            startup: create_all + additive DDL + seeds
+    routers/                28 endpoint modules, one per domain (137 routes); order in routers/__init__.py
+    services/               shared helpers: stock, stock_snapshot, animal_sync, transitions, reproduction, mortality, common, seed
+                            (module map: docs/context/backend-map.md)
     reports_router.py       read-only /api/reports/{calving,reproductive-status,abortions} (decision 0011); included after api_router
-    models.py               SQLAlchemy models and enums (26 tables)
+    models/                 SQLAlchemy models and enums by domain (package; `from models import X` still works)
     schemas.py              Pydantic request/response models
     database.py             async engine/session, DATABASE_URL normalisation
     auth.py                 JWT, password hashing, require_roles
@@ -85,7 +88,7 @@ livestock-mgs/
 Omitted: `.venv`, `node_modules`, `frontend/build`, caches, `.git`. Also present but not source: local DB/log files under `backend/` and `frontend/`; do not read them.
 
 ## 5. Architecture
-**Request flow:** React pages -> `frontend/src/lib/api.js` (Axios, attaches JWT from localStorage, redirects to login on 401) -> FastAPI `api_router` in `backend/server.py` (prefix `/api`) -> Pydantic schemas -> `AsyncSession` -> PostgreSQL. All business logic lives in `server.py`; there is no service/repository layer.
+**Request flow:** React pages -> `frontend/src/lib/api.js` (Axios, attaches JWT from localStorage, redirects to login on 401) -> FastAPI routers in `backend/routers/` (prefix `/api`, registered by `backend/server.py`) -> Pydantic schemas -> `AsyncSession` -> PostgreSQL. All business logic lives in `server.py`; there is no service/repository layer.
 
 **Key flows**
 1. Daily log: one location + date container with events. Creating a log validates stock, creates events and adjusts `stock_levels` in ONE local commit.
@@ -96,7 +99,7 @@ Omitted: `.venv`, `node_modules`, `frontend/build`, caches, `.git`. Also present
 6. Identity and reconciliation: `animal_identifiers` (several IDs per animal) and `reconciliation_sessions/entries` (tag reconciliation against reader data), pages `/reconciliation` and the PD-test import.
 7. Mortality and sales: `death_causes`, `mortality_thresholds` (Settings), `/reports/mortality`; `customers` and `sale_details` back sold events. Pages for `/stock`, `/reports/sales`, `/customers` are linked in the sidebar but NOT implemented (catch-all redirects to Dashboard).
 8. Category transitions (decision 0010): `category_transition_rules` (seeded at startup, editable in Settings) and `category_transitions` (audit log). Queue page `/animals/transitions` (admin, data entry) calls the bulk-confirm route; recording a calving auto-moves a heifer to cow once (best-effort).
-9. Startup: `server.py` runs `create_all`, nullable `ADD COLUMN IF NOT EXISTS` additions, and seeds categories/default data/vaccines/death causes/transition rules. Starting the backend therefore writes to whatever DB `DATABASE_URL` points at.
+9. Startup: `bootstrap.py` (called from `server.py`) runs `create_all`, nullable `ADD COLUMN IF NOT EXISTS` additions, and seeds categories/default data/vaccines/death causes/transition rules. Starting the backend therefore writes to whatever DB `DATABASE_URL` points at.
 
 **External integrations:** none. The Herd Tag Registry integration was removed 2026-11-08 (`docs/decisions/0007-remove-registry-integration.md`). Table `registry_sync_outbox` and column `animals.registry_tag_id` remain in the database as inert legacy data; no code references the table or writes the column.
 
@@ -109,7 +112,7 @@ Omitted: `.venv`, `node_modules`, `frontend/build`, caches, `.git`. Also present
 **Frontend routes** (`frontend/src/App.js`): `/login`, `/`, `/locations`, `/locations/:id`, `/animals`, `/animals/repeat-breeders`, `/animals/transitions`, `/animals/:id`, `/reproduction`, `/reproduction/status`, `/farm-health`, `/daily-logs`, `/daily-logs/new`, `/daily-logs/:id`, `/opening-balances`, `/reports`, `/reports/mortality`, `/reconciliation`, `/admin/users`, `/settings`; redirects `/repeat-breeders`, `/mortality`, `/users`; `*` -> `/`.
 
 ## 6. Data model
-Tables (all in `backend/models.py`; columns in `docs/context/data-model.md`), 26 in total: `users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types`, `bull_assignments`, `reproductive_cycles`, `bcs_records`, `animal_photos`, `animal_notes`, `animal_location_history`, `animal_identifiers`, `reconciliation_sessions`, `reconciliation_entries`, `reproductive_events`, `customers`, `sale_details`, `death_causes`, `mortality_thresholds`, `category_transition_rules`, `category_transitions` (plus the legacy `registry_sync_outbox` in the database without a model: inert, never drop).
+Tables (all in the `backend/models/` package; columns in `docs/context/data-model.md`), 26 in total: `users`, `locations`, `categories`, `opening_balances`, `daily_logs`, `diseases`, `events`, `stock_levels`, `animals`, `health_intervals`, `farm_health_events`, `vaccine_types`, `bull_assignments`, `reproductive_cycles`, `bcs_records`, `animal_photos`, `animal_notes`, `animal_location_history`, `animal_identifiers`, `reconciliation_sessions`, `reconciliation_entries`, `reproductive_events`, `customers`, `sale_details`, `death_causes`, `mortality_thresholds`, `category_transition_rules`, `category_transitions` (plus the legacy `registry_sync_outbox` in the database without a model: inert, never drop).
 
 Relationships (summary): a DailyLog belongs to a Location and has many Events; Events, OpeningBalances and StockLevels reference Location + Category + species; Animals reference Location + Category and carry a nullable inert `registry_tag_id`; transitions reference an animal, a rule and two categories; FarmHealthEvents reference Location (and categories as JSON).
 
@@ -164,7 +167,7 @@ Never put real values for env vars into commands or docs. Names: `DATABASE_URL`,
 | Frontend run | `npm start` (frontend) | not verified |
 | Frontend build / lint | `npm run build` (frontend; CRACO includes ESLint) | **verified** 2026-11-10 after the last frontend change: compiled with the same 6 pre-existing `react-hooks/exhaustive-deps` warnings (`DailyLogs`, `Dashboard`, `LocationDetail`, `OpeningBalances`, `Reports`); overwrites the ignored `frontend/build` |
 | Frontend tests | `CI=true npx craco test --watchAll=false <path>` (frontend) | ran 2026-11-10 for `EventForm`, `SidebarNavigation`, `TransitionQueue` (passing). `npm test -- --watchAll=false` itself, and the full 5-file set in one run, were not run in this refresh. No DOM testing library: tests use pure helpers or `react-dom` `act` |
-| DB migrations | none. Schema changes are startup `create_all` + nullable `ADD COLUMN IF NOT EXISTS` in `backend/server.py` | n/a |
+| DB migrations | none. Schema changes are startup `create_all` + nullable `ADD COLUMN IF NOT EXISTS` in `backend/bootstrap.py` | n/a |
 | Backend build/deploy | `gcloud builds submit --tag <image> .` then `gcloud run deploy shamba-backend ...` (backend), see `README_DEPLOY_GCP.md` | not verified; secrets must be bound via env/secret config, not typed into docs |
 | Frontend build/deploy | `gcloud builds submit --config cloudbuild.yaml .` then `gcloud run deploy srcstock ...` (frontend) | not verified. The README's `--build-arg` form is out of date; the YAML is authoritative |
 
@@ -202,7 +205,7 @@ Recent commits on `main` (newest first): `b999dc8` docs: record GCP release of 8
 Uncommitted working tree (23 modified, 11 untracked as of this refresh; nothing is committed or pushed by Claude):
 - Reproductive status board: backend route + `ReproductiveStatusBoard.jsx`, `SidebarNavigation.jsx`, `ReproductiveEventDialog.jsx`, tests.
 - Animal register: sex filter, "X of Y" count, client-side CSV export (`last_calving_date` now exposed on `AnimalResponse`); event-form category auto-fill (`EventForm.jsx`, `AnimalTagPicker.jsx`); the `DailyLogDetail.jsx` crash fix (undefined `typeSpecificTypes`).
-- Category transitions: backend tables/routes/hook (`models.py`, `schemas.py`, `server.py`, `tests/test_transitions.py`, decision 0010) and frontend (`TransitionQueue.jsx`, Settings rules card, AnimalDetail "Category history", `api.js` additions).
+- Category transitions: backend tables/routes/hook (`models.py`, `schemas/`, `server.py`, `tests/test_transitions.py`, decision 0010) and frontend (`TransitionQueue.jsx`, Settings rules card, AnimalDetail "Category history", `api.js` additions).
 - Docs touched along the way: ARCHITECTURE, DATA_MODEL, DOMAIN, KNOWN_ISSUES, ROADMAP, context/api, context/codemap, context/data-model, this file.
 
 Open follow-ups: commit and review the working tree; browser verification of the new pages (transition queue, Settings rules, status board, register export, event-form auto-fill); sidebar links `/stock`, `/reports/sales`, `/customers` lead to unimplemented pages; the first-calving transition hook covers only the standalone reproductive-events route (see KNOWN_ISSUES); no undo exists for a confirmed transition.
@@ -236,13 +239,13 @@ Must never break: stock arithmetic and the atomic event+stock commit; role enfor
 ## 13. How to write prompts for this repo
 Structure every prompt: goal in one sentence; area (backend/frontend/both); files to read first; constraints from section 12; required checks; "plan first, wait for approval" for anything touching stock, events or schema.
 - Start from a slash command: `/plan-feature` for features, `/fix-bug` for defects, `/db-change` for schema, `/next-improvement` for the top roadmap item, `/ship-check` to finish, `/update-docs` then `/update-context` after docs-relevant changes. Tell Claude Code to run the command by name.
-- Files to name: use `docs/context/codemap.md` rows. Common sets: stock/events -> `backend/server.py`, `backend/models.py`, `backend/schemas.py`, `frontend/src/pages/NewDailyLog.jsx`, `DailyLogDetail.jsx`, `frontend/src/components/EventForm.jsx`; health -> `backend/server.py` (health section), `frontend/src/pages/FarmHealth.jsx`; auth -> `backend/auth.py`, `frontend/src/context/AuthContext.js`; transitions -> `backend/server.py` ("Category transitions" block), `frontend/src/pages/TransitionQueue.jsx`.
+- Files to name: use `docs/context/codemap.md` rows. Common sets: stock/events -> `backend/server.py`, `backend/models.py`, `backend/schemas/`, `frontend/src/pages/NewDailyLog.jsx`, `DailyLogDetail.jsx`, `frontend/src/components/EventForm.jsx`; health -> `backend/server.py` (health section), `frontend/src/pages/FarmHealth.jsx`; auth -> `backend/auth.py`, `frontend/src/context/AuthContext.js`; transitions -> `backend/server.py` ("Category transitions" block), `frontend/src/pages/TransitionQueue.jsx`.
 - Checks to require: `flake8 --select=E9,F63,F7,F82` and `python -c "import server"` (dummy env) in `backend/`, `npm run build` for frontend work, the backend pytest command for auth/stock/event work (name modules explicitly, never the whole `tests/` folder), docs updated per the definition of done. State which behaviours were verified only by reading code (Postgres-specific behaviour is outside the SQLite suite).
 - Tell it what NOT to do: run live-HTTP tests, start the server against anything but the Docker test DB, run `gcloud`, push, or touch `.env` files.
 - Gotcha: scripts with long quoted heredocs can fail in the Bash tool here; Claude Code works around it by writing a script file first.
 
 Example prompt:
-> Run /plan-feature: make the daily-log event editor reject non-positive counts. Area: backend + `frontend/src/pages/DailyLogDetail.jsx`. Read `backend/schemas.py` (EventCreate/EventUpdate), the event-update route in `backend/server.py`, `docs/context/api.md` and `docs/KNOWN_ISSUES.md` (K07). Do not change stock apply/reverse logic or the schema. Wait for my approval of the plan. After approval: implement, then run /ship-check and report each step as pass/fail/skipped.
+> Run /plan-feature: make the daily-log event editor reject non-positive counts. Area: backend + `frontend/src/pages/DailyLogDetail.jsx`. Read `backend/schemas/` (EventCreate/EventUpdate), the event-update route in `backend/server.py`, `docs/context/api.md` and `docs/KNOWN_ISSUES.md` (K07). Do not change stock apply/reverse logic or the schema. Wait for my approval of the plan. After approval: implement, then run /ship-check and report each step as pass/fail/skipped.
 
 ## 14. Open questions / Unverified
 1. Which region/environment is live (`us-central1` vs `africa-south1`), and is there staging? Owner has not answered; Unverified.

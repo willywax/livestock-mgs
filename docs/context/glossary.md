@@ -1,5 +1,7 @@
 # ShambaManager glossary
 
+> **2026-11-21:** `backend/server.py` and `backend/models.py` were split (decision 0012). File and line anchors below that cite `backend/server.py:NNN` or `backend/models.py:NNN` describe the pre-split files (git `5ddbe1b`); find the current location in [backend-map.md](backend-map.md).
+
 > **Updated 2026-11-08:** the Herd Tag Registry integration was removed from the application (docs/decisions/0007). Content below was trimmed accordingly; line numbers are from the 2026-10-08 snapshot and have shifted. Treat anything still mentioning the Registry as historical.
 
 Meanings below come from code labels/seed translations, not a veterinary taxonomy. The Registry-specific terms were removed with the integration.

@@ -278,12 +278,12 @@ async def test_create_daily_log_syncs_register_per_event(client, db_session):
 
 
 async def test_register_sync_failure_never_breaks_daily_log_save(client, db_session, monkeypatch):
-    import server
+    from services import animal_sync
 
     async def boom(*a, **k):
         raise RuntimeError("register exploded")
 
-    monkeypatch.setattr(server, "_find_animal", boom)
+    monkeypatch.setattr(animal_sync, "_find_animal", boom)
     koo = await category_id(db_session, CATTLE)
     r = await client.post("/api/daily-logs", headers=auth("admin"), json={
         "location_id": FARM_ID, "log_date": "2024-03-03", "has_events": True,

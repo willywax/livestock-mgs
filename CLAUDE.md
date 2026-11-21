@@ -8,7 +8,7 @@ Configure `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `REACT_APP_BACKEND_URL` 
 | Purpose | Command (from) | Status |
 |---|---|---|
 | Import smoke test | `python -c "import server"` (backend; set dummy `DATABASE_URL` and `JWT_SECRET` in the shell first) | works (2026-11-08). Starts nothing and connects to nothing, but proves imports/routes load. Other test modules are live-HTTP (off-limits) |
-| Backend tests | `cd backend && python -m pytest tests/test_auth.py tests/test_stock.py tests/test_events.py tests/test_reproduction.py -q` (backend) | works (2026-11-08): 80 passed in ~8s (40 test functions; the original three modules alone give 45). SQLite in-memory via aiosqlite, `httpx.ASGITransport`, no server/network/Neon; needs `pytest-asyncio`. Does NOT validate PostgreSQL enums/JSONB/locking |
+| Backend tests | `cd backend && python -m pytest tests/test_auth.py tests/test_stock.py tests/test_events.py tests/test_reproduction.py -q` (backend) | works (2026-11-21): the four modules give 109 passed; all SQLite-mocked modules (`python -m pytest tests -q --ignore=tests/test_disease_events.py --ignore=tests/test_csv_import.py --ignore=tests/test_dashboard_analytics.py`) give 246 passed in ~40s. SQLite in-memory via aiosqlite, `httpx.ASGITransport`, no server/network/Neon; needs `pytest-asyncio`. Does NOT validate PostgreSQL enums/JSONB/locking |
 | Syntax lint | `python -m flake8 --select=E9,F63,F7,F82 .` (backend) | works (0 findings). Full flake8 has ~1,270 style findings: no baseline, do not "fix" them |
 | Test DB | `docker compose -f docker-compose.test.yml up -d --wait` then `down -v` | not verified (Docker daemon was off). Port 5433, loopback only, no password |
 | Backend run | `python -m uvicorn server:app --reload --port 8000` (backend) | denied for Claude in settings; the user runs it. Needs a reachable DB and runs DDL + seeding: use the test DB only |
@@ -24,7 +24,7 @@ Live-HTTP tests (`backend/tests/test_disease_events.py`, `test_csv_import.py`, `
 `/plan-feature` (clarify, explore, plan, wait) · `/fix-bug` (reproduce, failing test, fix, verify) · `/db-change` (schema changes) · `/ship-check` (all checks + diff review, pass/fail) · `/update-docs` · `/update-context` (refresh docs/PROJECT_CONTEXT.md) · `/next-improvement` (top ROADMAP item -> plan) · `/release` (manual only). Reviewer subagent: `.claude/agents/reviewer.md`. Path-scoped rules: `.claude/rules/`.
 
 ## Conventions that differ from defaults
-- All routes and most business logic live in `backend/server.py` (~4,170 lines, no service layer). Add to it carefully; do not refactor opportunistically.
+- Backend is modular (decision 0012): `server.py` is wiring only; endpoints in `backend/routers/<domain>.py`, shared helpers in `backend/services/`, ORM in `backend/models/<domain>.py`, startup DDL/seed in `backend/bootstrap.py`. Start from [backend-map](docs/context/backend-map.md). Dependency direction `routers -> services -> models`; routers never import each other. New routers go into `ROUTERS` in `routers/__init__.py` (order matters: static paths before dynamic siblings). Tests monkeypatch the module where a name is used, not `server`. Do not refactor opportunistically.
 - Python snake_case, PascalCase Pydantic/ORM; str enums; `async def` routes, `AsyncSession`, `await` execute/flush/commit, `selectinload` what responses need; `expire_on_commit=False`.
 - Errors via `HTTPException(detail=...)`; writes guarded by `require_roles` (backend/auth.py). Backend auth is the real gate, frontend route guards are UI only.
 - Event + stock changes commit together in one transaction; keep apply/reverse stock helpers symmetric.
@@ -40,7 +40,7 @@ Live-HTTP tests (`backend/tests/test_disease_events.py`, `test_csv_import.py`, `
 - Fix a bug you were not asked to fix: log it in docs/KNOWN_ISSUES.md instead.
 
 ## Do not touch casually
-backend/server.py (startup DDL/seed, event reversal, stock projection, commit ordering) · backend/models.py, database.py · backend/seed_data.py · frontend/src/lib/api.js, context/AuthContext.js.
+backend/bootstrap.py (startup DDL/seed) · backend/services/stock.py and services/animal_sync.py (stock projection, event reversal, commit ordering) · backend/routers/daily_logs.py · backend/models/, database.py · backend/seed_data.py · frontend/src/lib/api.js, context/AuthContext.js.
 
 ## Definition of done
 1. Backend changes: `flake8 --select=E9,F63,F7,F82` clean AND the import smoke test passes. Frontend changes: `npm run build` passes. Also run the backend tests (command in the Commands table) when touching auth, stock or event code; add tests there for new behaviour. They use SQLite, so Postgres-specific behaviour is verified only by reading code or on the test DB.
@@ -53,5 +53,5 @@ backend/server.py (startup DDL/seed, event reversal, stock projection, commit or
 
 ## Docs (read on demand)
 - [ARCHITECTURE](docs/ARCHITECTURE.md) · [DATA_MODEL](docs/DATA_MODEL.md) · [DEPLOYMENT](docs/DEPLOYMENT.md) · [DOMAIN](docs/DOMAIN.md) · [KNOWN_ISSUES](docs/KNOWN_ISSUES.md) · [ROADMAP](docs/ROADMAP.md) · [decisions/](docs/decisions/)
-- Detailed references: [architecture](docs/context/architecture.md), [data-model](docs/context/data-model.md) (every column), [api](docs/context/api.md) (every route + actual auth), [integration](docs/context/integration.md) (removal note), [codemap](docs/context/codemap.md) (task -> files), [glossary](docs/context/glossary.md).
+- Detailed references: [architecture](docs/context/architecture.md), [data-model](docs/context/data-model.md) (every column), [api](docs/context/api.md) (every route + actual auth), [integration](docs/context/integration.md) (removal note), [backend-map](docs/context/backend-map.md) (module layout, rules) · [codemap](docs/context/codemap.md) (task -> files), [glossary](docs/context/glossary.md).
 - `memory/PRD.md` is historical (it says SQLite/phone login in places); trust code over it. `../ANALYSIS_REPORT.md` (outside the repo) holds the original findings table.

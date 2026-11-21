@@ -15,7 +15,7 @@ Regenerate `docs/PROJECT_CONTEXT.md` so it matches the repo now. Edit only that 
    - `backend/requirements.txt`, `frontend/package.json`, `backend/Dockerfile`, `frontend/Dockerfile` for versions.
    - Directory listing of the repo (exclude `.venv`, `node_modules`, `build`, caches, `.git`).
    - `CLAUDE.md`, `.claude/` (settings, rules, agents, skills, hooks), `docs/` including `KNOWN_ISSUES.md` and `ROADMAP.md` if present.
-   - `backend/models.py` enums and tables, route list in `backend/server.py`, and `frontend/src/App.js` routes.
+   - `backend/models/` enums and tables, route modules in `backend/routers/` (see docs/context/backend-map.md), and `frontend/src/App.js` routes.
 3. Update each section from that evidence. Specifically:
    - Section 2: today's date, branch, commit hash, working-tree state.
    - Section 8: re-run only the SAFE verified commands (the import smoke test `python -c "import server"` with dummy `DATABASE_URL` and `JWT_SECRET`, and `flake8 --select=E9,F63,F7,F82`) and update their status. Leave anything else "not verified" unless you ran it. Never run deploy commands, the backend server, or the live-HTTP tests.

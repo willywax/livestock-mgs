@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 
-import server
+from services import transitions as transitions_svc
 from conftest import FARM_ID, auth, category_id, make_daily_log, post_event
 from models import Animal, AnimalAcquisitionType, AnimalSex, SpeciesType
 
@@ -87,7 +87,7 @@ async def test_months_ago_cutoff_matches_age_in_months():
     for today in (date(2026, 3, 31), date(2026, 3, 30), date(2024, 3, 29), date(2026, 1, 31), date(2026, 12, 31),
                   date(2026, 2, 28), date(2026, 5, 1)):
         for months in (0, 1, 2, 7, 12, 18, 25):
-            cutoff = server._months_ago(today, months)
+            cutoff = transitions_svc._months_ago(today, months)
             for offset in range(0, 900):
                 birth = today - timedelta(days=offset)
-                assert (birth <= cutoff) == (server._age_in_months(birth, today) >= months), (today, months, birth)
+                assert (birth <= cutoff) == (transitions_svc._age_in_months(birth, today) >= months), (today, months, birth)

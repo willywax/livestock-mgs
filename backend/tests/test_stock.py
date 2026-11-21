@@ -3,7 +3,7 @@ import pytest
 from conftest import FARM_ID, category_id, make_location, make_stock, stock_count
 from models import EventType, SpeciesType
 from schemas import EventCreate
-from server import apply_event_to_stock, check_stock_availability, reverse_event_stock
+from services.stock import apply_event_to_stock, check_stock_availability, reverse_event_stock
 
 pytestmark = pytest.mark.asyncio
 CATTLE = SpeciesType.CATTLE

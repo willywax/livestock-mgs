@@ -1,5 +1,7 @@
 # ShambaManager architecture and inventory
 
+> **2026-11-21:** `backend/server.py` and `backend/models.py` were split (decision 0012). File and line anchors below that cite `backend/server.py:NNN` or `backend/models.py:NNN` describe the pre-split files (git `5ddbe1b`); find the current location in [backend-map.md](backend-map.md).
+
 > **Updated 2026-11-08:** the Herd Tag Registry integration was removed from the application (docs/decisions/0007). Content below was trimmed accordingly; line numbers are from the 2026-10-08 snapshot and have shifted. Treat anything still mentioning the Registry as historical.
 
 Snapshot: 2026-10-08, main 9b72555, tag pre-analysis-20261008. Actual folder is livestock-mgs, not livestock-manager.
@@ -28,7 +30,8 @@ Two-level map (excluded directories omitted; source subdirectories collapsed):
 livestock-mgs/
   .claude/                 (empty at audit start)
   .vscode/                settings.json (local editor configuration)
-  backend/                auth.py, database.py, models.py, schemas.py, server.py,
+  backend/                auth.py, database.py, server.py (wiring), bootstrap.py,
+                          schemas/, models/, routers/, services/ (see backend-map.md),
                           seed_data.py, requirements.txt, Dockerfile,
                           .dockerignore, tests/
   frontend/               src/, public/, plugins/, package.json, Dockerfile,
@@ -96,13 +99,13 @@ Axios interceptors attach localStorage JWT and redirect 401 to login (`frontend/
 AuthContext holds user/role/loading; pages use local useState/useEffect and explicit reload functions. No Redux/query cache is installed (`frontend/src/context/AuthContext.js:6`, `frontend/package.json:5`).
 Shared components: Layout and 46 files under components/ui.
 Cross-repo duplication is conceptual: buttons/cards/dialogs, auth contexts/route guards, dashboards, animal edit forms. Registry uses bespoke TSX primitives, not the same shadcn implementation; no shared package. See sibling `tags-src/frontend/src/components/ui/Button.tsx:1`, `tags-src/frontend/src/components/ProtectedRoute.tsx:1`.
-Low: event-specific forms and payload construction are repeated across create/edit flows, with drift already visible: gift fields exist in EventUpdate but not EventCreate; empty edit strings are omitted (`backend/schemas.py:104`, `:160`; `frontend/src/pages/DailyLogDetail.jsx:318`).
+Low: event-specific forms and payload construction are repeated across create/edit flows, with drift already visible: gift fields exist in EventUpdate but not EventCreate; empty edit strings are omitted (`backend/schemas/`, `:160`; `frontend/src/pages/DailyLogDetail.jsx:318`).
 
 ## Identity boundary audit
 | Severity | Location | Identity handling |
 |---|---|---|
 | High | `backend/models.py:212` | Animal stores local tag, species/category/location/sex, DOB, ancestry, status alongside optional registry_tag_id. |
-| High | `backend/schemas.py:454`, `:469`; `backend/server.py:3071`, `:3191`, `:3336` | Create, CSV import and update accept/write local DOB; update changes status with no Registry write. |
+| High | `backend/schemas/`, `:469`; `backend/server.py:3071`, `:3191`, `:3336` | Create, CSV import and update accept/write local DOB; update changes status with no Registry write. |
 | Medium | `backend/server.py:2967`, `:3241` | Responses expose local identity; age/untagged filters compute from local DOB. Birth events do not automatically create these individual calf rows. |
 | High | `frontend/src/pages/Animals.jsx:168`, `:668` | Local UI authors DOB (the Registry integration no longer exists). |
 | Medium | `backend/server.py:3006`, `:3061`; `frontend/src/pages/Animals.jsx:453` | CSV template invites local DOB entry; list filters/status badges and tagging view consume local identity facts. |
@@ -111,7 +114,7 @@ No Shamba birth_cohort/production_stage column or assignment exists. Category tr
 ## Quality/risk evidence
 - Critical (conditional exploitability): JWT_SECRET has a literal fallback and empty user tables get a fixed default admin. backend/.env and frontend/.env are tracked (git index; values excluded). Require explicit secret/bootstrap configuration and review exposure (`backend/auth.py:14`, `backend/seed_data.py:62`, `backend/server.py:139`).
 - Resolved 2026-11-08: the open business GETs now require a JWT (see api.md). CORS/frontend gating is still not authorization; backend dependencies are.
-- High: stock read-modify-write has no lock/atomic increment; concurrent requests can lose adjustments (`backend/server.py:2789`, `:2801`). Negative/zero event counts are not constrained in EventCreate/EventUpdate (`backend/schemas.py:109`, `:142`).
+- High: stock read-modify-write has no lock/atomic increment; concurrent requests can lose adjustments (`backend/server.py:2789`, `:2801`). Negative/zero event counts are not constrained in EventCreate/EventUpdate (`backend/schemas/`, `:142`).
 - Medium: genuine query-per-row in upcoming/list health category resolution; bulk import also queries for each duplicate. Batch these after measuring (`backend/server.py:3735`, `:3785`, `:3200`).
 - Medium: async ORM usage is broadly consistent with awaited I/O and selectinload. no synchronous Session.query use in Shamba's request path was found (`backend/registry_client.py:151`, `backend/registry_auth.py:55`).
 - Low: init_db/get_sample_locations are imported but not called by server; get_current_active_user is unused. Stock arithmetic is duplicated in apply/reverse/replay helpers (`backend/server.py:17`, `:56`, `:2655`, `:2718`, `:2812`; `backend/auth.py:62`).

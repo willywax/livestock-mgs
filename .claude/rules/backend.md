@@ -3,7 +3,7 @@ paths:
   - "backend/**/*.py"
 ---
 # Backend rules
-- Routes, stock logic and health logic all live in `backend/server.py`; read the surrounding code and `docs/context/codemap.md` before editing. Do not split or refactor it as a side effect.
+- Layout: `server.py` (wiring only), `routers/` (endpoints per domain), `services/` (shared helpers: stock, animal sync, transitions), `models/` (ORM per domain), `bootstrap.py` (startup DDL/seed). Read `docs/context/backend-map.md` and the owning module before editing. Direction is `routers -> services -> models`; never import one router from another (move the helper to `services/`). Register new routers in `routers/__init__.py` `ROUTERS` (static paths before dynamic siblings). Do not split or move code as a side effect of another task.
 - Every route must choose auth explicitly (`require_roles(...)` or `get_current_user`). Only health, login and the three CSV template downloads are public (KNOWN_ISSUES K21); never add another unauthenticated route.
 - Stock changes: apply/reverse helpers must stay symmetric, and event write + stock adjustment commit in ONE transaction. There is no row lock on `stock_levels`; do not add new read-modify-write paths without noting it in KNOWN_ISSUES.
 - Never start the server or import `database.py` against a real DB to "inspect"; startup runs DDL and seeding. Use the test DB (`docker-compose.test.yml`) only.

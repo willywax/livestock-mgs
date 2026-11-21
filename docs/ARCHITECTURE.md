@@ -2,13 +2,13 @@
 Short map. Full detail (inventory, request flow, UI routes, risks): [context/architecture.md](context/architecture.md). Task-to-file lookup: [context/codemap.md](context/codemap.md).
 
 ## Modules
-- `backend/server.py` entry point (`app`), all `/api` routes, startup DDL/seed, stock apply/reverse/recompute, farm-health due-date logic.
+- `backend/server.py` entry point (`app`): wiring only. `backend/routers/` (endpoints per domain, order in `routers/__init__.py`), `backend/services/` (stock apply/reverse/recompute, animal-register sync, transitions), `backend/bootstrap.py` (startup DDL/seed). Full map: [context/backend-map.md](context/backend-map.md); decision 0012.
 - `backend/reports_router.py`: `reports_router` (prefix `/api/reports`), included in `server.py` after `api_router`. Read-only reproduction reports `/calving`, `/reproductive-status`, `/abortions` (SQLAlchemy Core, portable to SQLite). It must never reuse a path already in `api_router` (`/reports/daily|range|analytics|detailed|sales|mortality`). Pydantic response models live in that file, not `schemas.py`.
-- `backend/models.py`, `schemas.py`, `database.py`, `auth.py`: ORM + enums, Pydantic contracts, async engine/session, JWT + `require_roles`.
+- `backend/models/` (package, by domain), `schemas/`, `database.py`, `auth.py`: ORM + enums, Pydantic contracts, async engine/session, JWT + `require_roles`.
 - `frontend/src/App.js` (routes), `pages/`, `components/`, `context/AuthContext.js`, `lib/api.js`.
 
 ## Flows
-1. UI -> `lib/api.js` (adds JWT) -> `/api/*` in server.py -> `AsyncSession` -> PostgreSQL.
+1. UI -> `lib/api.js` (adds JWT) -> `/api/*` in `backend/routers/*` -> `AsyncSession` -> PostgreSQL.
 2. Daily log create: validate stock, insert events, adjust `stock_levels`, ONE commit.
 3. Event edit: reverse old stock effect then apply new. Delete: reverse stock, remove event.
 4. Farm health: intervals + events produce next-due dates; vaccine types may override.

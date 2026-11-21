@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, select
 
-import server
+from services import animal_sync, transitions as transitions_svc
 from conftest import FARM_ID, auth, category_id, make_daily_log, make_location, make_stock, post_event, api_stock
 from models import (Animal, AnimalAcquisitionType, AnimalSex, AnimalStatus, Event, EventAnimalLink,
                     SpeciesType, User, DailyLog, CategoryTransition)
@@ -92,7 +92,7 @@ async def test_services_resave_edit_and_delete_are_replayable(client, db_session
     first = await create(client, log, 'service', animal_tags='MOTHER')
     second = await create(client, log, 'service', animal_tags='MOTHER')
     event = await db_session.get(Event, first['id'])
-    assert await server._sync_animals_from_event(db_session, event, await db_session.get(DailyLog, log), await db_session.get(User, 1)) == []
+    assert await animal_sync._sync_animals_from_event(db_session, event, await db_session.get(DailyLog, log), await db_session.get(User, 1)) == []
     await db_session.refresh(animal)
     assert animal.services_without_conception == 2
     updated = await client.put(f"/api/events/{first['id']}", json={'notes': 'Corrected'}, headers=auth('admin'))
@@ -153,11 +153,11 @@ async def test_death_sale_transfer_and_retag_preserve_links(client, db_session):
 
 
 async def test_sync_never_raises_and_repro_failure_does_not_break_save(client, db_session, monkeypatch):
-    assert await server._sync_animals_from_event(db_session, object(), object(), object())
+    assert await animal_sync._sync_animals_from_event(db_session, object(), object(), object())
     animal, log, cat = await setup(db_session)
     async def broken(*args, **kwargs):
         raise RuntimeError('Injected failure')
-    monkeypatch.setattr(server, '_sync_daily_links', broken)
+    monkeypatch.setattr(animal_sync, '_sync_daily_links', broken)
     ev = await create(client, log, 'death', category_id=cat, animal_tags='MOTHER')
     assert ev['sync_warnings']
     await db_session.refresh(animal); assert animal.status == AnimalStatus.DEAD
@@ -166,10 +166,10 @@ async def test_sync_never_raises_and_repro_failure_does_not_break_save(client, d
 async def test_calving_transition_once_and_isolated_failure(client, db_session, monkeypatch):
     heifer = await category_id(db_session, SpeciesType.CATTLE, 'Mitamba')
     animal, log, cat = await setup(db_session, category_id=heifer)
-    await server._seed_category_transition_rules(db_session)
+    await transitions_svc._seed_category_transition_rules(db_session)
     async def broken(*args, **kwargs):
         raise RuntimeError('transition unavailable')
-    monkeypatch.setattr(server, '_confirm_category_transition', broken)
+    monkeypatch.setattr(transitions_svc, "_confirm_category_transition", broken)
     ev = await create(client, log, 'birth', category_id=cat, mother_tag='MOTHER')
     assert any('transition skipped' in warning for warning in ev['sync_warnings'])
     await db_session.refresh(animal)
@@ -218,7 +218,7 @@ async def test_first_calving_transition_is_not_repeated_on_edit(client, db_sessi
     heifer = await category_id(db_session, SpeciesType.CATTLE, 'Mitamba')
     animal, log, cow = await setup(db_session, category_id=heifer)
     await make_stock(db_session, FARM_ID, SpeciesType.CATTLE, heifer, 1)
-    await server._seed_category_transition_rules(db_session)
+    await transitions_svc._seed_category_transition_rules(db_session)
     ev = await create(client, log, 'birth', mother_tag='MOTHER', category_id=cow)
     assert not ev['sync_warnings'], ev
     await db_session.refresh(animal)
@@ -250,11 +250,11 @@ async def test_historical_backfill_is_idempotent_and_does_not_replay_state(clien
     db_session.add(Event(daily_log_id=log, event_type=EventType.SERVICE, species=SpeciesType.CATTLE,
                          animal_tags='MOTHER-LONGER', is_stock_event=False, count=1))
     await db_session.commit()
-    preview = await server._backfill_daily_event_links(db_session)
+    preview = await animal_sync._backfill_daily_event_links(db_session)
     assert preview['links'] == 1 and preview['unresolved'] == 1
     assert await db_session.scalar(select(func.count(EventAnimalLink.id))) == 0
-    await server._backfill_daily_event_links(db_session, apply=True)
-    await server._backfill_daily_event_links(db_session, apply=True)
+    await animal_sync._backfill_daily_event_links(db_session, apply=True)
+    await animal_sync._backfill_daily_event_links(db_session, apply=True)
     assert (await timeline(client, animal))['total'] == 1
     await db_session.refresh(animal)
     assert animal.reproductive_status == 'pregnant' and animal.months_pregnant == 8

@@ -4,7 +4,7 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy import select
 
-import server
+from routers import animal_photos, reproductive_cycles
 from conftest import FARM_ID, auth, category_id, make_daily_log, make_location, make_stock, post_event
 from models import (
     Animal, AnimalAcquisitionType, AnimalPhoto, AnimalSex, AnimalStatus, CategoryScope,
@@ -168,7 +168,7 @@ async def test_lifetime_calvings_failure_never_raises(client, db_session, monkey
     async def boom(*a, **k):
         raise RuntimeError("db down")
     monkeypatch.setattr(db_session, "execute", boom, raising=False)
-    await server._sync_lifetime_calvings(cow, db_session)  # must swallow and log
+    await reproductive_cycles._sync_lifetime_calvings(cow, db_session)  # must swallow and log
 
 
 async def test_cycle_update_recomputes_expected_date(client, db_session):
@@ -273,9 +273,9 @@ async def test_timeline_merges_and_filters_health_events(client, db_session):
 def fake_gcs(monkeypatch):
     calls = {"upload": [], "delete": []}
     monkeypatch.setenv("GCS_BUCKET_NAME", "test-bucket")
-    monkeypatch.setattr(server, "_gcs_upload", lambda path, data, ct: calls["upload"].append((path, ct)))
-    monkeypatch.setattr(server, "_gcs_delete", lambda path: calls["delete"].append(path))
-    monkeypatch.setattr(server, "_gcs_sign_urls", lambda paths: {p: f"https://signed.test/{p}" for p in paths})
+    monkeypatch.setattr(animal_photos, "_gcs_upload", lambda path, data, ct: calls["upload"].append((path, ct)))
+    monkeypatch.setattr(animal_photos, "_gcs_delete", lambda path: calls["delete"].append(path))
+    monkeypatch.setattr(animal_photos, "_gcs_sign_urls", lambda paths: {p: f"https://signed.test/{p}" for p in paths})
     return calls
 
 
@@ -319,7 +319,7 @@ async def test_photo_upload_rejections(client, db_session, fake_gcs, monkeypatch
     assert (await upload(client, cow, data=b"not really a png", ctype="image/png")).status_code == 415
     assert (await upload(client, cow, role="viewer")).status_code == 403
     assert (await upload(client, cow, caption="x" * 300)).status_code == 422
-    monkeypatch.setattr(server, "MAX_PHOTO_BYTES", 16)
+    monkeypatch.setattr(animal_photos, "MAX_PHOTO_BYTES", 16)
     assert (await upload(client, cow)).status_code == 413
     assert fake_gcs["upload"] == []  # nothing reached storage
     assert (await db_session.execute(select(AnimalPhoto))).scalars().all() == []
@@ -332,10 +332,10 @@ async def test_photo_delete_removes_object_then_row(client, db_session, fake_gcs
 
     def boom(path):
         raise RuntimeError("storage down")
-    monkeypatch.setattr(server, "_gcs_delete", boom)
+    monkeypatch.setattr(animal_photos, "_gcs_delete", boom)
     assert (await client.delete(url, headers=auth("admin"))).status_code == 502
     assert len((await db_session.execute(select(AnimalPhoto))).scalars().all()) == 1  # row kept
-    monkeypatch.setattr(server, "_gcs_delete", lambda path: fake_gcs["delete"].append(path))
+    monkeypatch.setattr(animal_photos, "_gcs_delete", lambda path: fake_gcs["delete"].append(path))
     assert (await client.delete(url, headers=auth("admin"))).status_code == 200
     assert fake_gcs["delete"] == [photo["gcs_path"]]
     assert (await client.delete(url, headers=auth("admin"))).status_code == 404

@@ -1,4 +1,6 @@
 # Known issues
+
+> **2026-11-21:** `backend/server.py` and `backend/models.py` were split (decision 0012). File and line anchors below that cite `backend/server.py:NNN` or `backend/models.py:NNN` describe the pre-split files (git `5ddbe1b`); find the current location in [backend-map.md](backend-map.md).
 Source: read-only analysis of main 9b72555 (2026-10-08) plus spot checks on 2026-11-08. "Unverified" = not reproduced by running code. Fix by plan (`/plan-feature`, `/fix-bug`); do not fix opportunistically. Close an item by moving it to "Resolved" with the commit.
 
 | ID | Sev | Area | Issue | Files | Status |
